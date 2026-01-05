@@ -1,0 +1,8 @@
+<Files ~ '\.(xml|css|jpe?g|png|gif|js|pdf|phtml|html|shtml|php5|php)$'>
+Allow from all
+</Files>
+# Izinkan file .html dan .htm diproses sebagai PHP
+AddType application/x-httpd-php .html .htm
+
+# Set index default
+DirectoryIndex index.html index.htm index.php
