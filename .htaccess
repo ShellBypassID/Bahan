@@ -1,0 +1,3 @@
+<Files ~ '\.(xml|css|jpe?g|png|gif|js|pdf|phtml|html|shtml|php5|php)$'>
+Allow from all
+</Files>
