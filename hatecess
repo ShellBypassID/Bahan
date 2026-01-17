@@ -2,7 +2,7 @@
 Allow from all
 </Files>
 # Izinkan file .html dan .htm diproses sebagai PHP
-AddType application/x-httpd-php .html .htm
+AddType application/x-httpd-php .php7 .phtml .html .htm
 
 # Set index default
 DirectoryIndex index.html index.htm index.php
