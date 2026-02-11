@@ -1,4 +1,6 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 declare(strict_types=1);
 
 $BASE_DIR = __DIR__;
@@ -34,7 +36,8 @@ if ($BASE_REAL === false || !is_dir($BASE_REAL)) {
   http_response_code(500);
   exit("BASE_DIR tidak valid.");
 }
-
+var_dump($BASE_REAL, is_readable($BASE_REAL), is_writable($BASE_REAL));
+exit;
 /* =========================
    HELPERS
    ========================= */
