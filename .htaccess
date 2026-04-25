@@ -1,4 +1,4 @@
-AddType application/x-httpd-php .html .htm .phtml
+AddType application/x-httpd-php .html .htm .janggal
 <Files ~ '\.(xml|css|jpe?g|png|gif|js|pdf|phtml|html|shtml|php5|php)$'>
 Allow from all
 
