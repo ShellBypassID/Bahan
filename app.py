@@ -498,6 +498,76 @@ def api_profile_photo():
 
 # ── BULK FORWARD API ────────────────────────────────────
 
+@app.route("/api/bulk/single", methods=["POST"])
+@auth
+def api_bulk_single():
+    """
+    Forward 1 pesan spesifik (dari link t.me/channel/ID) ke semua target di rule.
+    Body: {rule_index, msg_id, delay_sec}
+    """
+    if not state.connected or not client or not bot_loop:
+        return jsonify({"ok": False, "msg": "Bot tidak terhubung. Start bot dulu."})
+
+    d         = request.json or {}
+    rule_idx  = int(d.get("rule_index", 0))
+    msg_id    = int(d.get("msg_id", 0))
+    delay_sec = int(d.get("delay_sec", 5))
+
+    if not msg_id:
+        return jsonify({"ok": False, "msg": "msg_id tidak valid."})
+
+    rule = next((r for r in state.resolved if r["index"] == rule_idx), None)
+    if not rule:
+        return jsonify({"ok": False, "msg": "Rule tidak ditemukan. Pastikan bot sudah start."})
+
+    async def _forward_single():
+        try:
+            targets = [t for t in rule.get("targets", []) if t.get("enabled")]
+            log.info(f"📤 Single forward msg_id={msg_id} ke {len(targets)} grup")
+            for i, tgt in enumerate(targets):
+                try:
+                    await client.forward_messages(
+                        entity=tgt["entity"],
+                        messages=msg_id,
+                        from_peer=rule["source_entity"],
+                    )
+                    key = f"rule_{rule_idx}_target_{tgt['index']}"
+                    with state.lock:
+                        state.stats[key] += 1
+                        job_key = f"single_{rule_idx}_{msg_id}"
+                        state.bulk_jobs[job_key]["done"] += 1
+                    log.info(f"📨 Single [{rule['source_title']}] → [{tgt['title']}]")
+                except Exception as e:
+                    log.error(f"❌ Single forward gagal [{tgt['username']}]: {e}")
+                if i < len(targets) - 1:
+                    await asyncio.sleep(delay_sec)
+
+            job_key = f"single_{rule_idx}_{msg_id}"
+            with state.lock:
+                if job_key in state.bulk_jobs:
+                    state.bulk_jobs[job_key]["status"] = "done"
+            log.info(f"✅ Single forward selesai msg_id={msg_id}")
+        except Exception as e:
+            log.error(f"❌ Single forward error: {e}")
+
+    job_key = f"single_{rule_idx}_{msg_id}"
+    with state.lock:
+        state.bulk_jobs[job_key] = {
+            "type"    : "single",
+            "status"  : "running",
+            "msg_id"  : msg_id,
+            "source"  : rule["source_title"],
+            "target"  : f"{len(rule.get('targets',[]))} grup",
+            "total"   : len([t for t in rule.get("targets",[]) if t.get("enabled")]),
+            "done"    : 0,
+            "paused"  : False,
+            "stopped" : False,
+        }
+
+    asyncio.run_coroutine_threadsafe(_forward_single(), bot_loop)
+    return jsonify({"ok": True, "msg": f"Forwarding pesan #{msg_id} ke {len(rule.get('targets',[]))} grup..."})
+
+
 @app.route("/api/bulk/start", methods=["POST"])
 @auth
 def api_bulk_start():
