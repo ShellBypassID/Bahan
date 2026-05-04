@@ -15,7 +15,7 @@
 }
 html,body{height:100%;font-family:'JetBrains Mono',monospace;background:var(--bg);color:var(--text);font-size:13px}
 
-/* ── LOGIN ── */
+/* LOGIN */
 #loginScreen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999}
 #loginScreen::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(41,182,246,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(41,182,246,.03) 1px,transparent 1px);background-size:44px 44px;animation:gridMove 18s linear infinite}
 @keyframes gridMove{to{background-position:44px 44px}}
@@ -35,7 +35,7 @@ textarea.form-input{resize:vertical;min-height:70px}
 .btn-primary:active{transform:scale(.98)}
 .err-box{background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);border-radius:4px;padding:10px 13px;color:var(--red);font-size:12px;margin-bottom:16px;display:none}
 
-/* ── LAYOUT ── */
+/* LAYOUT */
 #app{display:none;height:100vh;flex-direction:column}
 .topbar{height:54px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 22px;flex-shrink:0;position:sticky;top:0;z-index:50}
 .topbar-left{display:flex;align-items:center;gap:13px}
@@ -50,15 +50,15 @@ textarea.form-input{resize:vertical;min-height:70px}
 .pill.off .dot{background:var(--red)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .btn-sm{padding:6px 14px;border-radius:3px;border:none;cursor:pointer;font-family:'Syne',sans-serif;font-weight:700;font-size:11px;letter-spacing:.05em;transition:opacity .2s,transform .1s}
-.btn-sm:hover{opacity:.82}
-.btn-sm:active{transform:scale(.97)}
+.btn-sm:hover{opacity:.82}.btn-sm:active{transform:scale(.97)}
 .btn-green{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000}
 .btn-red{background:rgba(244,67,54,.12);border:1px solid rgba(244,67,54,.25);color:var(--red)}
+.btn-yellow{background:rgba(255,215,64,.12);border:1px solid rgba(255,215,64,.25);color:var(--yellow)}
 .btn-gray{background:var(--muted2);color:var(--text)}
 .btn-logout{background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:3px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:11px;transition:border-color .2s}
 .btn-logout:hover{border-color:var(--red);color:var(--red)}
 
-/* ── SIDEBAR + CONTENT ── */
+/* BODY */
 .body-wrap{flex:1;display:flex;overflow:hidden}
 .sidebar{width:200px;background:var(--panel);border-right:1px solid var(--border);flex-shrink:0;padding:12px 0;overflow-y:auto}
 .nav-item{display:flex;align-items:center;gap:10px;padding:10px 18px;cursor:pointer;color:var(--muted);font-size:12px;transition:all .15s;border-left:3px solid transparent}
@@ -66,11 +66,9 @@ textarea.form-input{resize:vertical;min-height:70px}
 .nav-item.active{color:var(--accent);background:rgba(41,182,246,.07);border-left-color:var(--accent)}
 .nav-icon{font-size:15px;width:18px;text-align:center}
 .content{flex:1;overflow-y:auto;padding:22px}
-
-/* ── PAGES ── */
 .page{display:none}.page.active{display:block}
 
-/* ── STAT CARDS ── */
+/* STAT CARDS */
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
 .stat-card{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:18px 20px;position:relative;overflow:hidden;transition:border-color .2s}
 .stat-card:hover{border-color:var(--accent)}
@@ -81,23 +79,23 @@ textarea.form-input{resize:vertical;min-height:70px}
 .stat-sub{font-size:10px;color:var(--muted);margin-top:5px}
 .stat-icon{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:26px;opacity:.1}
 
-/* ── PANEL BOX ── */
+/* BOX */
 .box{background:var(--panel);border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:18px}
 .box-head{padding:12px 17px;border-bottom:1px solid var(--border);background:var(--panel2);display:flex;align-items:center;justify-content:space-between}
 .box-title{font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:#fff;letter-spacing:.04em}
 .box-body{padding:16px 17px}
 
-/* ── RULES EDITOR ── */
+/* RULES EDITOR */
 .rule-card{background:var(--panel2);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;overflow:hidden}
 .rule-head{padding:12px 15px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:background .15s}
 .rule-head:hover{background:rgba(41,182,246,.04)}
-.rule-badge{font-size:10px;padding:3px 9px;border-radius:12px;background:rgba(41,182,246,.1);color:var(--accent);font-weight:600;letter-spacing:.06em}
+.rule-badge{font-size:10px;padding:3px 9px;border-radius:12px;background:rgba(41,182,246,.1);color:var(--accent);font-weight:600}
 .rule-body{padding:14px 15px;border-top:1px solid var(--border);display:none}
 .rule-body.open{display:block}
 .target-row{display:grid;grid-template-columns:1fr 80px 80px 80px 36px;gap:8px;align-items:center;margin-bottom:8px;background:rgba(0,0,0,.2);padding:9px 11px;border-radius:4px;border:1px solid var(--border)}
 .target-label{font-size:10px;color:var(--muted);letter-spacing:.08em;text-align:center;margin-bottom:4px}
 
-/* ── TOGGLE ── */
+/* TOGGLE */
 .toggle{position:relative;width:34px;height:19px;cursor:pointer;flex-shrink:0}
 .toggle input{opacity:0;width:0;height:0}
 .tslider{position:absolute;inset:0;background:var(--muted2);border-radius:19px;transition:.3s}
@@ -105,12 +103,12 @@ textarea.form-input{resize:vertical;min-height:70px}
 .toggle input:checked + .tslider{background:rgba(41,182,246,.25)}
 .toggle input:checked + .tslider::before{transform:translateX(15px);background:var(--accent)}
 
-/* ── CHIP FILTER ── */
+/* CHIPS */
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
 .chip{padding:5px 12px;border-radius:20px;border:1px solid var(--border);color:var(--muted);font-size:11px;cursor:pointer;transition:all .2s;user-select:none}
 .chip.on{border-color:var(--accent);color:var(--accent);background:rgba(41,182,246,.08)}
 
-/* ── LOG BOX ── */
+/* LOG */
 .log-box{background:var(--input-bg);border-radius:3px;height:280px;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:3px}
 .log-box::-webkit-scrollbar{width:4px}
 .log-box::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
@@ -120,33 +118,43 @@ textarea.form-input{resize:vertical;min-height:70px}
 .ll.INFO{color:var(--accent)}.ll.ERROR{color:var(--red)}.ll.WARNING{color:var(--yellow)}
 .lm{word-break:break-all;color:var(--text)}
 
-/* ── PROFILE ── */
+/* PROFILE */
 .avatar-wrap{display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:22px}
 .avatar{width:88px;height:88px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:32px;font-family:'Syne',sans-serif;font-weight:800;color:#000;position:relative;cursor:pointer;overflow:hidden}
 .avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none}
 .avatar-overlay{position:absolute;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;font-size:12px;color:#fff}
 .avatar:hover .avatar-overlay{display:flex}
-#avatarInput{display:none}
-.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
-/* ── TOAST ── */
-.toast{position:fixed;bottom:24px;right:24px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:11px 18px;font-size:13px;color:var(--text);box-shadow:0 8px 32px rgba(0,0,0,.5);transform:translateY(70px);opacity:0;transition:all .35s cubic-bezier(.16,1,.3,1);z-index:999}
-.toast.show{transform:translateY(0);opacity:1}
-.toast.ok{border-left:3px solid var(--green)}.toast.err{border-left:3px solid var(--red)}
+/* BULK FORWARD */
+.bulk-job-card{background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:14px 16px;margin-bottom:10px}
+.bulk-job-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.bulk-status{font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;letter-spacing:.06em}
+.bulk-status.running{background:rgba(41,182,246,.1);color:var(--accent)}
+.bulk-status.done{background:rgba(0,230,118,.1);color:var(--green)}
+.bulk-status.stopped{background:rgba(244,67,54,.1);color:var(--red)}
+.bulk-status.starting{background:rgba(255,215,64,.1);color:var(--yellow)}
+.bulk-status.error{background:rgba(244,67,54,.15);color:var(--red)}
+.bulk-status.paused{background:rgba(255,215,64,.1);color:var(--yellow)}
+.progress-bar{width:100%;height:6px;background:var(--muted2);border-radius:3px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:3px;transition:width .5s}
 
-/* ── MISC ── */
+/* MISC */
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .section-title{font-family:'Syne',sans-serif;font-weight:700;font-size:12px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
 .sep{height:1px;background:var(--border);margin:16px 0}
 .badge-online{display:inline-block;padding:3px 10px;border-radius:12px;background:rgba(0,230,118,.1);color:var(--green);font-size:11px;font-weight:600}
 .badge-off{display:inline-block;padding:3px 10px;border-radius:12px;background:rgba(244,67,54,.1);color:var(--red);font-size:11px;font-weight:600}
-@media(max-width:900px){.stats-grid{grid-template-columns:1fr 1fr}.two-col{grid-template-columns:1fr}.info-grid{grid-template-columns:1fr}.sidebar{width:160px}}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:11px 18px;font-size:13px;color:var(--text);box-shadow:0 8px 32px rgba(0,0,0,.5);transform:translateY(70px);opacity:0;transition:all .35s cubic-bezier(.16,1,.3,1);z-index:999}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.ok{border-left:3px solid var(--green)}.toast.err{border-left:3px solid var(--red)}
+@media(max-width:900px){.stats-grid{grid-template-columns:1fr 1fr}.two-col{grid-template-columns:1fr}.info-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.stats-grid{grid-template-columns:1fr}.sidebar{display:none}}
 </style>
 </head>
 <body>
 
-<!-- ═══ LOGIN ═══ -->
+<!-- LOGIN -->
 <div id="loginScreen">
   <div class="login-card">
     <div class="login-logo">
@@ -155,7 +163,7 @@ textarea.form-input{resize:vertical;min-height:70px}
     </div>
     <div id="loginErr" class="err-box"></div>
     <label class="form-label">API Server URL</label>
-    <input class="form-input" id="serverUrl" placeholder="http://IP_RDP_KAMU:5000" value="">
+    <input class="form-input" id="serverUrl" placeholder="http://145.79.12.17:5000">
     <label class="form-label">Username</label>
     <input class="form-input" id="loginUser" placeholder="admin">
     <label class="form-label">Password</label>
@@ -164,38 +172,36 @@ textarea.form-input{resize:vertical;min-height:70px}
   </div>
 </div>
 
-<!-- ═══ APP ═══ -->
+<!-- APP -->
 <div id="app">
-  <!-- TOPBAR -->
   <div class="topbar">
     <div class="topbar-left">
       <div class="tb-logo">📡</div>
-      <div><div class="tb-name">TG Forwarder Pro</div></div>
+      <div class="tb-name">TG Forwarder Pro</div>
     </div>
     <div class="tb-right">
       <div class="pill off" id="statusPill"><div class="dot"></div><span id="statusText">Offline</span></div>
       <button class="btn-sm btn-green" id="btnStart" onclick="botStart()">▶ START</button>
-      <button class="btn-sm btn-red"   id="btnStop"  onclick="botStop()"  style="display:none">■ STOP</button>
+      <button class="btn-sm btn-red"   id="btnStop"  onclick="botStop()"    style="display:none">■ STOP</button>
       <button class="btn-sm btn-gray"  id="btnRestart" onclick="botRestart()" style="display:none">↺ RESTART</button>
       <button class="btn-logout" onclick="logout()">Keluar</button>
     </div>
   </div>
 
   <div class="body-wrap">
-    <!-- SIDEBAR -->
     <div class="sidebar">
-      <div class="nav-item active" onclick="showPage('dashboard')"><span class="nav-icon">📊</span>Dashboard</div>
-      <div class="nav-item" onclick="showPage('rules')"><span class="nav-icon">📋</span>Forward Rules</div>
-      <div class="nav-item" onclick="showPage('profile')"><span class="nav-icon">👤</span>Profil Akun</div>
-      <div class="nav-item" onclick="showPage('settings')"><span class="nav-icon">⚙️</span>Pengaturan</div>
-      <div class="nav-item" onclick="showPage('logs')"><span class="nav-icon">🖥</span>Live Log</div>
-      <div class="nav-item" onclick="showPage('errors')"><span class="nav-icon">⚠️</span>Error Log</div>
+      <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon">📊</span>Dashboard</div>
+      <div class="nav-item" onclick="showPage('bulk',this)"><span class="nav-icon">📤</span>Bulk Forward</div>
+      <div class="nav-item" onclick="showPage('rules',this)"><span class="nav-icon">📋</span>Forward Rules</div>
+      <div class="nav-item" onclick="showPage('profile',this)"><span class="nav-icon">👤</span>Profil Akun</div>
+      <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon">⚙️</span>Pengaturan</div>
+      <div class="nav-item" onclick="showPage('logs',this)"><span class="nav-icon">🖥</span>Live Log</div>
+      <div class="nav-item" onclick="showPage('errors',this)"><span class="nav-icon">⚠️</span>Error Log</div>
     </div>
 
-    <!-- CONTENT -->
     <div class="content">
 
-      <!-- ─── DASHBOARD ─── -->
+      <!-- DASHBOARD -->
       <div class="page active" id="page-dashboard">
         <div class="stats-grid">
           <div class="stat-card"><div class="stat-icon">📨</div><div class="stat-label">Total Forward</div><div class="stat-val b" id="s-total">0</div><div class="stat-sub">semua rule</div></div>
@@ -203,8 +209,6 @@ textarea.form-input{resize:vertical;min-height:70px}
           <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-label">Rule Aktif</div><div class="stat-val g" id="s-rules">0</div><div class="stat-sub">dari <span id="s-totalrules">0</span> rule</div></div>
           <div class="stat-card"><div class="stat-icon">⚠</div><div class="stat-label">Errors</div><div class="stat-val r" id="s-err">0</div><div class="stat-sub">total error</div></div>
         </div>
-
-        <!-- Akun info -->
         <div class="two-col">
           <div class="box">
             <div class="box-head"><span class="box-title">👤 Akun Login</span></div>
@@ -217,7 +221,56 @@ textarea.form-input{resize:vertical;min-height:70px}
         </div>
       </div>
 
-      <!-- ─── RULES ─── -->
+      <!-- BULK FORWARD -->
+      <div class="page" id="page-bulk">
+        <div class="box">
+          <div class="box-head"><span class="box-title">📤 Bulk Forward — Kirim Pesan Lama</span></div>
+          <div class="box-body">
+            <p style="color:var(--muted);font-size:11px;margin-bottom:18px">
+              Forward pesan lama dari channel ke semua grup di rule. Tiap grup punya antrian sendiri (paralel).
+              Contoh link pesan: t.me/jasabacklinks/<b style="color:var(--accent)">11</b> → nomor pesannya adalah <b style="color:var(--accent)">11</b>
+            </p>
+            <div class="info-grid" style="margin-bottom:16px">
+              <div>
+                <label class="form-label">Pilih Rule (Channel Sumber)</label>
+                <select class="form-select" id="bulkRuleSelect">
+                  <option value="">— pilih rule —</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Mulai dari Nomor Pesan</label>
+                <input class="form-input" id="bulkStartId" type="number" min="1" value="1" placeholder="Contoh: 11">
+              </div>
+              <div>
+                <label class="form-label">Jeda Antar Pesan (detik)</label>
+                <input class="form-input" id="bulkInterval" type="number" min="1" value="300" placeholder="300 = 5 menit">
+              </div>
+              <div style="display:flex;flex-direction:column;justify-content:flex-end;gap:8px">
+                <div style="font-size:11px;color:var(--muted)">
+                  💡 300 detik = 5 menit per pesan per grup
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button class="btn-sm btn-green" style="flex:1" onclick="startBulk()">🚀 Mulai Bulk</button>
+                  <button class="btn-sm btn-red" onclick="stopAllBulk()">⛔ Stop Semua</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Job List -->
+        <div class="box">
+          <div class="box-head">
+            <span class="box-title">📋 Status Antrian</span>
+            <button class="btn-sm btn-gray" onclick="loadBulkStatus()">Refresh</button>
+          </div>
+          <div class="box-body" id="bulkJobList">
+            <div style="color:var(--muted);text-align:center;padding:24px 0;font-size:12px">Belum ada job bulk berjalan</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RULES -->
       <div class="page" id="page-rules">
         <div class="box">
           <div class="box-head">
@@ -228,13 +281,13 @@ textarea.form-input{resize:vertical;min-height:70px}
             </div>
           </div>
           <div class="box-body">
-            <p style="color:var(--muted);font-size:11px;margin-bottom:14px">Setiap rule: 1 channel sumber → banyak grup tujuan. Setelah simpan, restart bot agar berlaku.</p>
+            <p style="color:var(--muted);font-size:11px;margin-bottom:14px">Setelah simpan, restart bot agar berlaku.</p>
             <div id="rulesEditor"></div>
           </div>
         </div>
       </div>
 
-      <!-- ─── PROFILE ─── -->
+      <!-- PROFILE -->
       <div class="page" id="page-profile">
         <div class="two-col">
           <div class="box">
@@ -246,24 +299,18 @@ textarea.form-input{resize:vertical;min-height:70px}
                   <img id="avatarImg">
                   <div class="avatar-overlay">Ganti Foto</div>
                 </div>
-                <input type="file" id="avatarInput" accept="image/*" onchange="handleAvatarChange(this)">
+                <input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="handleAvatarChange(this)">
                 <button class="btn-sm btn-green" id="btnUploadPhoto" style="display:none" onclick="uploadPhoto()">Upload Foto Baru</button>
               </div>
-              <div id="profileMeta" style="text-align:center;font-size:12px;color:var(--muted)">Login untuk melihat info akun</div>
+              <div id="profileMeta" style="text-align:center;font-size:12px;color:var(--muted)">Login untuk melihat info</div>
             </div>
           </div>
           <div class="box">
             <div class="box-head"><span class="box-title">✏️ Edit Profil</span></div>
             <div class="box-body">
               <div class="info-grid">
-                <div>
-                  <label class="form-label">Nama Depan</label>
-                  <input class="form-input" id="pFirst" placeholder="First name">
-                </div>
-                <div>
-                  <label class="form-label">Nama Belakang</label>
-                  <input class="form-input" id="pLast" placeholder="Last name">
-                </div>
+                <div><label class="form-label">Nama Depan</label><input class="form-input" id="pFirst" placeholder="First name"></div>
+                <div><label class="form-label">Nama Belakang</label><input class="form-input" id="pLast" placeholder="Last name"></div>
               </div>
               <label class="form-label">Bio / About</label>
               <textarea class="form-input" id="pBio" placeholder="Bio singkat..."></textarea>
@@ -273,24 +320,24 @@ textarea.form-input{resize:vertical;min-height:70px}
         </div>
       </div>
 
-      <!-- ─── SETTINGS ─── -->
+      <!-- SETTINGS -->
       <div class="page" id="page-settings">
         <div class="two-col">
           <div class="box">
             <div class="box-head"><span class="box-title">🔑 Kredensial API Telegram</span></div>
             <div class="box-body">
-              <p style="color:var(--muted);font-size:11px;margin-bottom:14px">Dapatkan di <a href="https://my.telegram.org" target="_blank" style="color:var(--accent)">my.telegram.org</a> → API development tools</p>
+              <p style="color:var(--muted);font-size:11px;margin-bottom:14px">Dapatkan di <a href="https://my.telegram.org" target="_blank" style="color:var(--accent)">my.telegram.org</a></p>
               <label class="form-label">API ID</label>
               <input class="form-input" id="cfgApiId" placeholder="123456" type="number">
               <label class="form-label">API Hash</label>
               <input class="form-input" id="cfgApiHash" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-              <button class="btn-sm btn-green" style="margin-top:4px" onclick="saveCredentials()">💾 Simpan</button>
+              <button class="btn-sm btn-green" onclick="saveCredentials()">💾 Simpan</button>
             </div>
           </div>
           <div class="box">
             <div class="box-head"><span class="box-title">🔧 Filter Pesan Global</span></div>
             <div class="box-body">
-              <p style="color:var(--muted);font-size:11px;margin-bottom:14px">Filter default untuk semua rule (bisa di-override per rule)</p>
+              <p style="color:var(--muted);font-size:11px;margin-bottom:14px">Filter default untuk semua rule</p>
               <div class="chips" id="globalChips"></div>
               <button class="btn-sm btn-green" style="margin-top:16px" onclick="saveGlobalFilter()">💾 Simpan Filter</button>
             </div>
@@ -298,7 +345,7 @@ textarea.form-input{resize:vertical;min-height:70px}
         </div>
       </div>
 
-      <!-- ─── LIVE LOG ─── -->
+      <!-- LIVE LOG -->
       <div class="page" id="page-logs">
         <div class="box">
           <div class="box-head">
@@ -312,7 +359,7 @@ textarea.form-input{resize:vertical;min-height:70px}
         </div>
       </div>
 
-      <!-- ─── ERROR LOG ─── -->
+      <!-- ERROR LOG -->
       <div class="page" id="page-errors">
         <div class="box">
           <div class="box-head"><span class="box-title">⚠️ Error Log</span><button class="btn-sm btn-gray" onclick="loadErrors()">Refresh</button></div>
@@ -320,210 +367,245 @@ textarea.form-input{resize:vertical;min-height:70px}
         </div>
       </div>
 
-    </div><!-- /content -->
-  </div><!-- /body-wrap -->
-</div><!-- /app -->
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-// ══ CONFIG ══════════════════════════════════════════════
 let API_BASE = localStorage.getItem('tgf_server') || '';
 let TOKEN    = localStorage.getItem('tgf_token')  || '';
+const $      = id => document.getElementById(id);
 
-// ══ UTILS ═══════════════════════════════════════════════
-const $ = id => document.getElementById(id);
 function toast(msg, type='ok') {
-  const t = $('toast'); t.textContent = msg;
-  t.className = `toast ${type} show`;
+  const t=$('toast'); t.textContent=msg;
+  t.className=`toast ${type} show`;
   clearTimeout(t._t);
-  t._t = setTimeout(() => t.className = 'toast', 3200);
+  t._t=setTimeout(()=>t.className='toast',3200);
 }
 
 async function api(path, opts={}) {
-  const res = await fetch(API_BASE + path, {
-    headers: {'Content-Type':'application/json', 'X-Auth-Token': TOKEN},
+  const res = await fetch(API_BASE+path, {
+    headers:{'Content-Type':'application/json','X-Auth-Token':TOKEN},
     ...opts,
-    body: opts.body ? (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body)) : undefined
+    body: opts.body?(typeof opts.body==='string'?opts.body:JSON.stringify(opts.body)):undefined
   });
   return res.json();
 }
 
-// ══ LOGIN ════════════════════════════════════════════════
+// ── LOGIN ──
 async function doLogin() {
-  const server = $('serverUrl').value.trim().replace(/\/$/, '');
-  const user   = $('loginUser').value.trim();
-  const pass   = $('loginPass').value;
-  if (!server) { showLoginErr('Isi URL server dulu.'); return; }
-  API_BASE = server;
+  const server=$('serverUrl').value.trim().replace(/\/$/,'');
+  const user=$('loginUser').value.trim();
+  const pass=$('loginPass').value;
+  if(!server){showLoginErr('Isi URL server dulu.');return;}
+  API_BASE=server;
   try {
-    const d = await api('/api/login', { method:'POST', body: JSON.stringify({username:user, password:pass}) });
-    if (d.ok) {
-      TOKEN = d.token;
-      localStorage.setItem('tgf_server', server);
-      localStorage.setItem('tgf_token',  TOKEN);
-      $('loginScreen').style.display = 'none';
-      $('app').style.display = 'flex';
+    const d=await api('/api/login',{method:'POST',body:JSON.stringify({username:user,password:pass})});
+    if(d.ok){
+      TOKEN=d.token;
+      localStorage.setItem('tgf_server',server);
+      localStorage.setItem('tgf_token',TOKEN);
+      $('loginScreen').style.display='none';
+      $('app').style.display='flex';
       init();
-    } else {
-      showLoginErr(d.msg || 'Login gagal.');
-    }
-  } catch(e) {
-    showLoginErr('Tidak bisa konek ke server: ' + server);
-  }
+    } else showLoginErr(d.msg||'Login gagal.');
+  } catch(e){ showLoginErr('Tidak bisa konek ke server: '+server); }
 }
-function showLoginErr(m) { const e=$('loginErr'); e.textContent=m; e.style.display='block'; }
-function logout() { localStorage.clear(); location.reload(); }
+function showLoginErr(m){const e=$('loginErr');e.textContent=m;e.style.display='block';}
+function logout(){localStorage.clear();location.reload();}
+$('loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 
-// ══ INIT ═════════════════════════════════════════════════
-function init() {
-  if (TOKEN && API_BASE) {
-    $('loginScreen').style.display = 'none';
-    $('app').style.display = 'flex';
-    loadConfig();
-    loadRulesEditor();
-    loadErrors();
-    startPolling();
-  }
+// ── INIT ──
+function init(){
+  loadConfig();
+  loadRulesEditor();
+  loadErrors();
+  loadBulkStatus();
+  startPolling();
 }
 
-// ══ NAVIGATION ═══════════════════════════════════════════
-function showPage(name) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+// ── NAV ──
+function showPage(name, el) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   $(`page-${name}`).classList.add('active');
-  event.currentTarget.classList.add('active');
-  if (name === 'logs') renderLog();
-  if (name === 'errors') loadErrors();
+  if(el) el.classList.add('active');
+  if(name==='logs') renderLog();
+  if(name==='errors') loadErrors();
+  if(name==='bulk') loadBulkStatus();
 }
 
-// ══ STATUS POLLING ═══════════════════════════════════════
-let pollTimer = null;
-function startPolling() {
-  pollStatus();
-  pollTimer = setInterval(pollStatus, 3000);
-}
+// ── STATUS POLL ──
+let localLogs=[], lastRulesResolved=[];
+function startPolling(){pollStatus();setInterval(pollStatus,3000);}
 
-async function pollStatus() {
-  try {
-    const d = await api('/api/status');
+async function pollStatus(){
+  try{
+    const d=await api('/api/status');
     updateDashboard(d);
+    lastRulesResolved=d.rules||[];
     pollLogs();
-  } catch(e) {}
+    if($('page-bulk').classList.contains('active')) loadBulkStatus();
+  }catch(e){}
 }
 
-function updateDashboard(d) {
-  // pill
-  const pill = $('statusPill');
-  if (d.connected) { pill.className='pill on'; $('statusText').textContent='Online'; }
-  else { pill.className='pill off'; $('statusText').textContent = d.running ? 'Konek...' : 'Offline'; }
+function updateDashboard(d){
+  const pill=$('statusPill');
+  if(d.connected){pill.className='pill on';$('statusText').textContent='Online';}
+  else{pill.className='pill off';$('statusText').textContent=d.running?'Konek...':'Offline';}
+  $('btnStart').style.display=d.running?'none':'';
+  $('btnStop').style.display=d.running?'':'none';
+  $('btnRestart').style.display=d.running?'':'none';
+  $('s-total').textContent=d.total_forward;
+  $('s-uptime').textContent=d.uptime||'—';
+  $('s-err').textContent=d.error_count;
+  $('s-rules').textContent=(d.rules||[]).filter(r=>r.enabled).length;
+  $('s-totalrules').textContent=(d.rules||[]).length;
 
-  $('btnStart').style.display   = d.running ? 'none' : '';
-  $('btnStop').style.display    = d.running ? '' : 'none';
-  $('btnRestart').style.display = d.running ? '' : 'none';
-
-  $('s-total').textContent = d.total_forward;
-  $('s-uptime').textContent = d.uptime || '—';
-  $('s-err').textContent = d.error_count;
-  $('s-rules').textContent = d.rules.filter(r=>r.enabled).length;
-  $('s-totalrules').textContent = d.rules.length;
-
-  // account info
-  if (d.me) {
-    $('accountInfo').innerHTML = `
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <div><span style="color:var(--muted)">Nama:</span> <b style="color:#fff">${d.me.name}</b></div>
-        <div><span style="color:var(--muted)">Username:</span> @${d.me.username||'-'}</div>
-        <div><span style="color:var(--muted)">Phone:</span> ${d.me.phone||'-'}</div>
-        <div><span style="color:var(--muted)">Status:</span> <span class="${d.connected?'badge-online':'badge-off'}">${d.connected?'Terhubung':'Terputus'}</span></div>
-      </div>`;
-    $('avatarInitial').textContent = (d.me.name||'?')[0].toUpperCase();
-    $('profileMeta').textContent = `@${d.me.username||'unknown'} • ${d.me.phone||''}`;
-    $('pFirst').placeholder = d.me.name.split(' ')[0] || '';
+  if(d.me){
+    $('accountInfo').innerHTML=`<div style="display:flex;flex-direction:column;gap:6px">
+      <div><span style="color:var(--muted)">Nama:</span> <b style="color:#fff">${d.me.name}</b></div>
+      <div><span style="color:var(--muted)">Username:</span> @${d.me.username||'-'}</div>
+      <div><span style="color:var(--muted)">Phone:</span> ${d.me.phone||'-'}</div>
+      <div><span style="color:var(--muted)">Status:</span> <span class="${d.connected?'badge-online':'badge-off'}">${d.connected?'Terhubung':'Terputus'}</span></div>
+    </div>`;
+    $('avatarInitial').textContent=(d.me.name||'?')[0].toUpperCase();
+    $('profileMeta').textContent=`@${d.me.username||'unknown'} • ${d.me.phone||''}`;
   }
 
-  // rules status
-  let html = '';
-  d.rules.forEach(r => {
-    const total = (r.targets||[]).reduce((s,t)=>s+t.forwarded,0);
-    html += `<div style="margin-bottom:10px;padding:10px;background:var(--input-bg);border-radius:4px;border:1px solid var(--border)">
+  let html='';
+  (d.rules||[]).forEach(r=>{
+    html+=`<div style="margin-bottom:10px;padding:10px;background:var(--input-bg);border-radius:4px;border:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <span style="color:var(--accent);font-weight:600">${r.source_title||r.source}</span>
         <span class="${r.enabled?'badge-online':'badge-off'}">${r.enabled?'Aktif':'Nonaktif'}</span>
       </div>
-      ${(r.targets||[]).map(t=>`
-        <div style="display:flex;justify-content:space-between;color:var(--muted);padding:3px 0;border-top:1px solid var(--border)">
-          <span>→ ${t.title||t.username}</span>
-          <span style="color:var(--accent2)">${t.forwarded} msg</span>
-        </div>`).join('')}
+      ${(r.targets||[]).map(t=>`<div style="display:flex;justify-content:space-between;color:var(--muted);padding:3px 0;border-top:1px solid var(--border)"><span>→ ${t.title||t.username}</span><span style="color:var(--accent2)">${t.forwarded} msg</span></div>`).join('')}
     </div>`;
   });
-  $('rulesStatus').innerHTML = html || '<span style="color:var(--muted)">Belum ada rule</span>';
+  $('rulesStatus').innerHTML=html||'<span style="color:var(--muted)">Belum ada rule</span>';
+
+  // Update bulk rule select
+  const sel=$('bulkRuleSelect');
+  const curVal=sel.value;
+  sel.innerHTML='<option value="">— pilih rule —</option>';
+  (d.rules||[]).forEach(r=>{
+    if(r.enabled){
+      const opt=document.createElement('option');
+      opt.value=r.index;
+      opt.textContent=`Rule ${r.index+1}: ${r.source_title||r.source}`;
+      sel.appendChild(opt);
+    }
+  });
+  if(curVal) sel.value=curVal;
 }
 
-// ══ BOT CONTROL ═══════════════════════════════════════════
-async function botStart() {
-  const d = await api('/api/bot/start', {method:'POST'});
-  toast(d.msg, d.ok?'ok':'err');
+// ── BOT CONTROL ──
+async function botStart(){const d=await api('/api/bot/start',{method:'POST'});toast(d.msg,d.ok?'ok':'err');}
+async function botStop(){const d=await api('/api/bot/stop',{method:'POST'});toast(d.msg,d.ok?'ok':'err');}
+async function botRestart(){toast('Merestart...','ok');const d=await api('/api/bot/restart',{method:'POST'});toast(d.msg,d.ok?'ok':'err');}
+
+// ── LOGS ──
+async function pollLogs(){
+  try{const logs=await api('/api/logs?n=150');localLogs=logs;if($('page-logs').classList.contains('active'))renderLog();}catch(e){}
 }
-async function botStop() {
-  const d = await api('/api/bot/stop', {method:'POST'});
-  toast(d.msg, d.ok?'ok':'err');
+function renderLog(){
+  const box=$('logBox');
+  box.innerHTML=localLogs.map(l=>`<div class="le"><span class="lt">${l.time}</span><span class="ll ${l.level}">${l.level}</span><span class="lm">${l.msg}</span></div>`).join('');
+  if($('autoScroll').checked) box.scrollTop=0;
 }
-async function botRestart() {
-  toast('Merestart bot...','ok');
-  const d = await api('/api/bot/restart', {method:'POST'});
-  toast(d.msg, d.ok?'ok':'err');
+function clearLog(){localLogs=[];renderLog();}
+async function loadErrors(){
+  try{
+    const errs=await api('/api/errors');
+    const el=$('errorList');
+    if(!errs.length){el.innerHTML='<div style="color:var(--muted);text-align:center;padding:24px 0">Tidak ada error 🎉</div>';return;}
+    el.innerHTML=errs.map(e=>`<div style="background:rgba(244,67,54,.06);border:1px solid rgba(244,67,54,.18);border-radius:4px;padding:10px 13px;margin-bottom:8px"><div style="color:var(--muted);font-size:10px;margin-bottom:4px">${e.time}</div><div style="color:var(--red);font-size:12px">${e.msg}</div></div>`).join('');
+  }catch(e){}
 }
 
-// ══ LOGS ══════════════════════════════════════════════════
-let localLogs = [];
-async function pollLogs() {
-  try {
-    const logs = await api('/api/logs?n=150');
-    localLogs = logs;
-    if ($('page-logs').classList.contains('active')) renderLog();
-  } catch(e) {}
-}
-function renderLog() {
-  const box = $('logBox');
-  box.innerHTML = localLogs.map(l =>
-    `<div class="le"><span class="lt">${l.time}</span><span class="ll ${l.level}">${l.level}</span><span class="lm">${l.msg}</span></div>`
-  ).join('');
-  if ($('autoScroll').checked) box.scrollTop = 0;
-}
-function clearLog() { localLogs = []; renderLog(); }
-
-async function loadErrors() {
-  try {
-    const errs = await api('/api/errors');
-    const el = $('errorList');
-    if (!errs.length) { el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px 0">Tidak ada error 🎉</div>'; return; }
-    el.innerHTML = errs.map(e =>
-      `<div style="background:rgba(244,67,54,.06);border:1px solid rgba(244,67,54,.18);border-radius:4px;padding:10px 13px;margin-bottom:8px">
-        <div style="color:var(--muted);font-size:10px;margin-bottom:4px">${e.time}</div>
-        <div style="color:var(--red);font-size:12px">${e.msg}</div>
-      </div>`
-    ).join('');
-  } catch(e) {}
+// ── BULK FORWARD ──
+async function startBulk(){
+  const ruleIdx=parseInt($('bulkRuleSelect').value);
+  const startId=parseInt($('bulkStartId').value)||1;
+  const interval=parseInt($('bulkInterval').value)||300;
+  if(isNaN(ruleIdx)||$('bulkRuleSelect').value===''){toast('Pilih rule dulu!','err');return;}
+  const d=await api('/api/bulk/start',{method:'POST',body:{rule_index:ruleIdx,start_msg_id:startId,interval_sec:interval}});
+  toast(d.msg,d.ok?'ok':'err');
+  if(d.ok) setTimeout(loadBulkStatus,1000);
 }
 
-// ══ RULES EDITOR ═════════════════════════════════════════
-let rulesData = [];
-
-async function loadRulesEditor() {
-  try {
-    const r = await api('/api/rules');
-    rulesData = r;
-    renderRulesEditor();
-  } catch(e) {}
+async function stopAllBulk(){
+  const d=await api('/api/bulk/stop_all',{method:'POST'});
+  toast(d.msg,d.ok?'ok':'err');
+  setTimeout(loadBulkStatus,500);
 }
 
-function renderRulesEditor() {
-  const el = $('rulesEditor');
-  if (!rulesData.length) { el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:24px">Belum ada rule. Klik "+ Tambah Rule"</div>'; return; }
-  el.innerHTML = rulesData.map((rule, i) => `
-    <div class="rule-card" id="rcard-${i}">
+async function bulkPause(key){
+  await api('/api/bulk/pause',{method:'POST',body:{job_key:key}});
+  toast('Di-pause','ok');setTimeout(loadBulkStatus,500);
+}
+async function bulkResume(key){
+  await api('/api/bulk/resume',{method:'POST',body:{job_key:key}});
+  toast('Dilanjutkan','ok');setTimeout(loadBulkStatus,500);
+}
+async function bulkStop(key){
+  await api('/api/bulk/stop',{method:'POST',body:{job_key:key}});
+  toast('Dihentikan','ok');setTimeout(loadBulkStatus,500);
+}
+
+async function loadBulkStatus(){
+  try{
+    const jobs=await api('/api/bulk/status');
+    const el=$('bulkJobList');
+    const keys=Object.keys(jobs);
+    if(!keys.length){
+      el.innerHTML='<div style="color:var(--muted);text-align:center;padding:24px 0;font-size:12px">Belum ada job bulk berjalan</div>';
+      return;
+    }
+    el.innerHTML=keys.map(key=>{
+      const j=jobs[key];
+      const pct=j.total>0?Math.round(j.done/j.total*100):0;
+      const statusLabel=j.paused?'paused':j.status;
+      const btns=j.status==='running'
+        ? (j.paused
+            ? `<button class="btn-sm btn-green" onclick="bulkResume('${key}')">▶ Resume</button>`
+            : `<button class="btn-sm btn-yellow" onclick="bulkPause('${key}')">⏸ Pause</button>`)
+            +`<button class="btn-sm btn-red" onclick="bulkStop('${key}')">⛔ Stop</button>`
+        : '';
+      return `<div class="bulk-job-card">
+        <div class="bulk-job-head">
+          <div>
+            <div style="font-weight:600;color:#fff;margin-bottom:3px">${j.source||''} → ${j.target||key}</div>
+            <div style="font-size:11px;color:var(--muted)">Mulai dari msg #${j.start_msg_id} • Jeda ${j.interval_sec}s</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="bulk-status ${statusLabel}">${statusLabel.toUpperCase()}</span>
+            ${btns}
+          </div>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)">
+          <span>${j.done} / ${j.total} pesan</span>
+          <span>${pct}% • msg_id saat ini: ${j.current_msg_id}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){}
+}
+
+// ── RULES EDITOR ──
+let rulesData=[];
+async function loadRulesEditor(){
+  try{const r=await api('/api/rules');rulesData=r;renderRulesEditor();}catch(e){}
+}
+function renderRulesEditor(){
+  const el=$('rulesEditor');
+  if(!rulesData.length){el.innerHTML='<div style="color:var(--muted);text-align:center;padding:24px">Belum ada rule. Klik "+ Tambah Rule"</div>';return;}
+  el.innerHTML=rulesData.map((rule,i)=>`
+    <div class="rule-card">
       <div class="rule-head" onclick="toggleRuleBody(${i})">
         <label class="toggle" onclick="event.stopPropagation()">
           <input type="checkbox" ${rule.enabled!==false?'checked':''} onchange="rulesData[${i}].enabled=this.checked">
@@ -532,12 +614,11 @@ function renderRulesEditor() {
         <span class="rule-badge">Rule ${i+1}</span>
         <span style="flex:1;color:var(--text);font-size:12px;margin-left:4px">${rule.source||'(belum diisi)'} → ${(rule.targets||[]).length} grup</span>
         <span style="color:var(--muted);font-size:11px">▼</span>
-        <button class="btn-sm btn-red" onclick="event.stopPropagation();deleteRule(${i})" style="font-size:10px;padding:3px 9px">✕ Hapus</button>
+        <button class="btn-sm btn-red" onclick="event.stopPropagation();deleteRule(${i})" style="font-size:10px;padding:3px 9px">✕</button>
       </div>
       <div class="rule-body" id="rbody-${i}">
         <label class="form-label">Channel Sumber</label>
-        <input class="form-input" placeholder="@nama_channel atau https://t.me/..." value="${rule.source||''}" oninput="rulesData[${i}].source=this.value">
-
+        <input class="form-input" placeholder="@nama_channel" value="${rule.source||''}" oninput="rulesData[${i}].source=this.value">
         <div class="sep"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <span class="section-title">Grup Tujuan</span>
@@ -547,149 +628,74 @@ function renderRulesEditor() {
           ${['Username Grup','Interval (mnt)','Jeda (dtk)','Aktif',''].map(l=>`<div class="target-label">${l}</div>`).join('')}
         </div>
         <div id="targets-${i}">
-          ${(rule.targets||[]).map((t,j) => renderTargetRow(i,j,t)).join('')}
+          ${(rule.targets||[]).map((t,j)=>renderTargetRow(i,j,t)).join('')}
         </div>
-
         <div class="sep"></div>
         <span class="section-title">Filter Tipe Pesan</span>
         <div class="chips" id="rchips-${i}"></div>
       </div>
-    </div>
-  `).join('');
+    </div>`).join('');
 
-  // render chips setelah DOM siap
-  rulesData.forEach((rule, i) => {
-    const types = ['text','photo','video','document','audio','sticker'];
-    const labels = {text:'📝 Teks',photo:'🖼 Foto',video:'🎬 Video',document:'📎 File',audio:'🎵 Audio',sticker:'🎭 Stiker'};
-    const filt = rule.filter || {};
-    const box = $(`rchips-${i}`);
-    if (!box) return;
-    box.innerHTML = types.map(t =>
-      `<div class="chip ${filt[t]!==false?'on':''}" onclick="toggleRuleFilter(${i},'${t}',this)">${labels[t]}</div>`
-    ).join('');
+  rulesData.forEach((rule,i)=>{
+    const types=['text','photo','video','document','audio','sticker'];
+    const labels={text:'📝 Teks',photo:'🖼 Foto',video:'🎬 Video',document:'📎 File',audio:'🎵 Audio',sticker:'🎭 Stiker'};
+    const filt=rule.filter||{};
+    const box=$(`rchips-${i}`);
+    if(!box)return;
+    box.innerHTML=types.map(t=>`<div class="chip ${filt[t]!==false?'on':''}" onclick="toggleRuleFilter(${i},'${t}',this)">${labels[t]}</div>`).join('');
   });
 }
-
-function renderTargetRow(ri, ti, t) {
-  return `<div class="target-row" id="trow-${ri}-${ti}">
+function renderTargetRow(ri,ti,t){
+  return `<div class="target-row">
     <input class="form-input sm" placeholder="@grupku" value="${t.username||''}" oninput="rulesData[${ri}].targets[${ti}].username=this.value">
-    <input class="form-input sm" type="number" min="0" placeholder="0" value="${t.interval_min||0}" title="0 = kirim semua. N = kirim 1x per N menit per grup" oninput="rulesData[${ri}].targets[${ti}].interval_min=+this.value">
-    <input class="form-input sm" type="number" min="0" placeholder="0" value="${t.delay_sec||0}" title="Jeda sebelum kirim ke grup ini (detik)" oninput="rulesData[${ri}].targets[${ti}].delay_sec=+this.value">
-    <label class="toggle" style="margin:auto">
-      <input type="checkbox" ${t.enabled!==false?'checked':''} onchange="rulesData[${ri}].targets[${ti}].enabled=this.checked">
-      <span class="tslider"></span>
-    </label>
+    <input class="form-input sm" type="number" min="0" value="${t.interval_min||0}" title="0=kirim semua, N=max 1x per N menit" oninput="rulesData[${ri}].targets[${ti}].interval_min=+this.value">
+    <input class="form-input sm" type="number" min="0" value="${t.delay_sec||0}" title="Jeda sebelum kirim (detik)" oninput="rulesData[${ri}].targets[${ti}].delay_sec=+this.value">
+    <label class="toggle" style="margin:auto"><input type="checkbox" ${t.enabled!==false?'checked':''} onchange="rulesData[${ri}].targets[${ti}].enabled=this.checked"><span class="tslider"></span></label>
     <button class="btn-sm btn-red" onclick="deleteTarget(${ri},${ti})" style="font-size:10px;padding:3px 7px">✕</button>
   </div>`;
 }
-
-function toggleRuleBody(i) {
-  const b = $(`rbody-${i}`);
-  b.classList.toggle('open');
-}
-function toggleRuleFilter(ri, type, el) {
-  if (!rulesData[ri].filter) rulesData[ri].filter = {};
-  rulesData[ri].filter[type] = !rulesData[ri].filter[type];
-  el.classList.toggle('on');
-}
-function addRule() {
-  rulesData.push({source:'',targets:[],enabled:true,filter:{}});
-  renderRulesEditor();
-  // buka rule baru
-  const i = rulesData.length-1;
-  setTimeout(()=>{ const b=$(`rbody-${i}`); if(b) b.classList.add('open'); }, 50);
-}
-function deleteRule(i) {
-  if (!confirm(`Hapus Rule ${i+1}?`)) return;
-  rulesData.splice(i,1);
-  renderRulesEditor();
-}
-function addTarget(ri) {
-  if (!rulesData[ri].targets) rulesData[ri].targets = [];
-  const ti = rulesData[ri].targets.length;
+function toggleRuleBody(i){const b=$(`rbody-${i}`);b.classList.toggle('open');}
+function toggleRuleFilter(ri,type,el){if(!rulesData[ri].filter)rulesData[ri].filter={};rulesData[ri].filter[type]=!rulesData[ri].filter[type];el.classList.toggle('on');}
+function addRule(){rulesData.push({source:'',targets:[],enabled:true,filter:{}});renderRulesEditor();setTimeout(()=>{const b=$(`rbody-${rulesData.length-1}`);if(b)b.classList.add('open');},50);}
+function deleteRule(i){if(!confirm(`Hapus Rule ${i+1}?`))return;rulesData.splice(i,1);renderRulesEditor();}
+function addTarget(ri){
+  if(!rulesData[ri].targets)rulesData[ri].targets=[];
+  const ti=rulesData[ri].targets.length;
   rulesData[ri].targets.push({username:'',interval_min:0,delay_sec:0,enabled:true});
-  const box = $(`targets-${ri}`);
-  if (box) box.insertAdjacentHTML('beforeend', renderTargetRow(ri, ti, rulesData[ri].targets[ti]));
+  const box=$(`targets-${ri}`);
+  if(box)box.insertAdjacentHTML('beforeend',renderTargetRow(ri,ti,rulesData[ri].targets[ti]));
 }
-function deleteTarget(ri, ti) {
-  rulesData[ri].targets.splice(ti,1);
-  renderRulesEditor();
-}
-async function saveRules() {
-  const d = await api('/api/rules', {method:'POST', body:{rules:rulesData}});
-  toast(d.msg || (d.ok?'Tersimpan':'Gagal'), d.ok?'ok':'err');
-}
+function deleteTarget(ri,ti){rulesData[ri].targets.splice(ti,1);renderRulesEditor();}
+async function saveRules(){const d=await api('/api/rules',{method:'POST',body:{rules:rulesData}});toast(d.msg||(d.ok?'Tersimpan':'Gagal'),d.ok?'ok':'err');}
 
-// ══ PROFILE ═══════════════════════════════════════════════
-let newPhotoB64 = null;
-function handleAvatarChange(input) {
-  const file = input.files[0]; if(!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    newPhotoB64 = e.target.result;
-    const img = $('avatarImg');
-    img.src = newPhotoB64; img.style.display='block';
-    $('avatarInitial').style.display='none';
-    $('btnUploadPhoto').style.display='';
-  };
+// ── PROFILE ──
+let newPhotoB64=null;
+function handleAvatarChange(input){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{newPhotoB64=e.target.result;const img=$('avatarImg');img.src=newPhotoB64;img.style.display='block';$('avatarInitial').style.display='none';$('btnUploadPhoto').style.display='';};
   reader.readAsDataURL(file);
 }
-async function uploadPhoto() {
-  if (!newPhotoB64) return;
-  const d = await api('/api/profile/photo', {method:'POST', body:{image_base64:newPhotoB64}});
-  toast(d.msg, d.ok?'ok':'err');
-  if (d.ok) { newPhotoB64=null; $('btnUploadPhoto').style.display='none'; }
-}
-async function saveProfile() {
-  const d = await api('/api/profile/update', {method:'POST', body:{
-    first_name: $('pFirst').value,
-    last_name : $('pLast').value,
-    bio       : $('pBio').value,
-  }});
-  toast(d.msg, d.ok?'ok':'err');
-}
+async function uploadPhoto(){if(!newPhotoB64)return;const d=await api('/api/profile/photo',{method:'POST',body:{image_base64:newPhotoB64}});toast(d.msg,d.ok?'ok':'err');if(d.ok){newPhotoB64=null;$('btnUploadPhoto').style.display='none';}}
+async function saveProfile(){const d=await api('/api/profile/update',{method:'POST',body:{first_name:$('pFirst').value,last_name:$('pLast').value,bio:$('pBio').value}});toast(d.msg,d.ok?'ok':'err');}
 
-// ══ SETTINGS ══════════════════════════════════════════════
-let globalFilter = {};
-async function loadConfig() {
-  try {
-    const d = await api('/api/config');
-    $('cfgApiId').value   = d.api_id   || '';
-    globalFilter = d.global_filter || {text:true,photo:true,video:true,document:true,audio:true,sticker:false};
-    renderGlobalChips();
-  } catch(e) {}
+// ── SETTINGS ──
+let globalFilter={};
+async function loadConfig(){
+  try{const d=await api('/api/config');$('cfgApiId').value=d.api_id||'';globalFilter=d.global_filter||{text:true,photo:true,video:true,document:true,audio:true,sticker:false};renderGlobalChips();}catch(e){}
 }
+function renderGlobalChips(){
+  const types=['text','photo','video','document','audio','sticker'];
+  const labels={text:'📝 Teks',photo:'🖼 Foto',video:'🎬 Video',document:'📎 File',audio:'🎵 Audio',sticker:'🎭 Stiker'};
+  $('globalChips').innerHTML=types.map(t=>`<div class="chip ${globalFilter[t]?'on':''}" onclick="globalFilter['${t}']=!globalFilter['${t}'];this.classList.toggle('on')">${labels[t]}</div>`).join('');
+}
+async function saveCredentials(){const d=await api('/api/config/credentials',{method:'POST',body:{api_id:$('cfgApiId').value,api_hash:$('cfgApiHash').value}});toast(d.ok?'Tersimpan. Restart bot.':'Gagal',d.ok?'ok':'err');}
+async function saveGlobalFilter(){const d=await api('/api/config/filter',{method:'POST',body:{filter:globalFilter}});toast(d.ok?'Filter disimpan.':'Gagal',d.ok?'ok':'err');}
 
-function renderGlobalChips() {
-  const types  = ['text','photo','video','document','audio','sticker'];
-  const labels = {text:'📝 Teks',photo:'🖼 Foto',video:'🎬 Video',document:'📎 File',audio:'🎵 Audio',sticker:'🎭 Stiker'};
-  $('globalChips').innerHTML = types.map(t =>
-    `<div class="chip ${globalFilter[t]?'on':''}" onclick="globalFilter['${t}']=!globalFilter['${t}'];this.classList.toggle('on')">${labels[t]}</div>`
-  ).join('');
-}
-
-async function saveCredentials() {
-  const d = await api('/api/config/credentials', {method:'POST', body:{
-    api_id  : $('cfgApiId').value,
-    api_hash: $('cfgApiHash').value,
-  }});
-  toast(d.ok?'Kredensial disimpan. Restart bot.':'Gagal', d.ok?'ok':'err');
-}
-async function saveGlobalFilter() {
-  const d = await api('/api/config/filter', {method:'POST', body:{filter:globalFilter}});
-  toast(d.ok?'Filter disimpan.':'Gagal', d.ok?'ok':'err');
-}
-
-// ══ AUTO LOGIN ════════════════════════════════════════════
-window.onload = () => {
-  if (TOKEN && API_BASE) {
-    $('serverUrl').value = API_BASE;
-    $('loginScreen').style.display = 'none';
-    $('app').style.display = 'flex';
-    init();
-  }
+// ── AUTO LOGIN ──
+window.onload=()=>{
+  if(TOKEN&&API_BASE){$('serverUrl').value=API_BASE;$('loginScreen').style.display='none';$('app').style.display='flex';init();}
 };
-$('loginPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 </script>
 </body>
 </html>
